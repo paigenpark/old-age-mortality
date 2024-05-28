@@ -1,0 +1,176 @@
+# Model Exploration
+The goal of this project is to determine whether the Kannisto model (currently used by the HMD) provides significantly worse estimates of old age mortality than other models would. 
+
+```{r}
+library(here)
+library(tidyverse)
+```
+
+
+To start, I want to fit the Kannisto model to the raw HMD data to make sure I know how it works 
+
+I think that what Magali told me to do was use the death input data and the exposure to risk data to calculate the rates - but I should double check on that 
+```{r}
+path <- here("data") 
+
+# toy example: Australia 
+aus_deaths <- read.table(paste(path, "AUSdeath.txt", sep='/'), sep=',', header = TRUE)
+aus_exposure <- read.table(paste(path, "AUSExposures_1x1.txt", sep='/'), sep='', 
+                           header = TRUE, stringsAsFactors = FALSE, skip = 2)
+```
+
+Get a sense of the data structure 
+```{r}
+head(aus_deaths)
+head(aus_exposure)
+```
+```{r}
+unique(aus_deaths$Sex)
+```
+
+Prep for merge
+```{r}
+aus_expo_long <- pivot_longer(aus_exposure, cols = c('Female', 'Male', 'Total'),
+                              names_to = "Sex", values_to = "Exposure")
+
+aus_expo_long <- aus_expo_long %>%
+  mutate(Sex = ifelse(Sex == "Female", "f", 
+                      ifelse(Sex == "Male", "m", 
+                             ifelse(Sex == "Total", "b", Sex)))) %>%
+  mutate(Age = ifelse(Age == "110+", "110", Age)) %>%
+  mutate(Age = as.integer(Age)) %>%
+  filter(!Sex == 'b')
+
+aus_deaths <- aus_deaths |> 
+  filter(LDB == 1) |>
+  select(Year, Age, Sex, Deaths) |>
+  filter(Age != "TOT" & Age != "UNK") |>
+  mutate(Age = as.integer(Age))
+```
+
+Merge data
+```{r}
+combined_df <- aus_expo_long |>
+  left_join(aus_deaths, by = c("Year", "Age", "Sex")) |>
+  mutate(Deaths = as.integer(Deaths))
+```
+```{r}
+combined_df
+```
+
+
+Get rates 
+```{r}
+combined_df <- combined_df |> 
+  mutate(Death_Rate = Deaths / Exposure)
+```
+
+### Fit Kannisto model
+Prep data - remove younger ages and rm missing
+```{r}
+old_age_data <- combined_df |>
+  filter(Age >= 80) |>
+  replace_na(list(Deaths = 0))
+```
+
+Set up functions 
+```{r}
+log_lik_fn <- function(params, data) {
+  a <- params[1]
+  b <- params[2]
+  
+  x <- data$Age
+  Dx <- data$Deaths
+  Ex <- data$Exposure
+  mux_plus_0.5 <- ( a*exp(b*( (x+0.5) - 80) ) ) / ( 1 + a*exp(b*( (x+0.5) - 80)) )
+  
+  # add small constant to avoid log(0)
+  log_lik <- sum( (Dx*log(pmax(mux_plus_0.5, .Machine$double.eps))) - (Ex*mux_plus_0.5) )
+  
+  if (!is.finite(log_lik)) {
+  print(params)
+  print(mux_plus_0.5)
+  stop("Non-finite log likelihood value encountered")
+  }
+  
+  return(-log_lik * 10^-6) # scale down according to HMD procedure 
+}
+
+
+
+log_lik_grad <- function(params, data) {
+  a <- params[1]
+  b <- params[2]
+  
+  data <- data %>%
+    filter(Age >= 80)
+  
+  x <- data$Age
+  Dx <- data$Deaths
+  Ex <- data$Exposure
+  exp_term <- exp(b * ((x + 0.5) - 80))
+  mux_plus_0.5 <- ( a * exp_term ) / ( 1 + a * exp_term )
+  
+  # Partial derivatives
+  grad_a <- sum((Dx / mux_plus_0.5 - Ex) * (exp_term / (1 + a * exp_term)))
+  grad_b <- sum((Dx / mux_plus_0.5 - Ex) * (a * (x + 0.5 - 80) * exp_term / (1 + a * exp_term)))
+  
+  grad <- -c(grad_a, grad_b) * 10^-6
+  
+  if (any(!is.finite(grad))) {
+    print(params)
+    print(mux_plus_0.5)
+    print(grad)
+    stop("Non-finite gradient value encountered")
+  }
+  
+  return(-c(grad_a, grad_b) * 10^-6) # Return negative gradient
+}
+```
+
+Grid search for initial a and b values
+```{r}
+# Define the grid for a and b
+a_values <- seq(0.01, .3, length.out = 10)
+b_values <- seq(0.01, .3, length.out = 10)
+
+# Perform grid search
+grid_search_results <- expand.grid(a = a_values, b = b_values)
+
+# Evaluate log-likelihood for each combination of a and b
+grid_search_results$log_lik <- apply(grid_search_results, 1, function(row) {
+  params <- c(row['a'], row['b'])
+  return(log_lik_fn(params, old_age_data))
+})
+
+# Find the combination with the highest log-likelihood (least negative)
+best_params <- grid_search_results[which.min(grid_search_results$log_lik), ]
+
+# Extract the best initial values for a and b
+initial_params <- c(a = best_params$a, b = best_params$b)
+
+# Print the best initial parameters
+print(initial_params)
+```
+
+Do optimization 
+```{r}
+result <- optim(par = initial_params, fn = log_lik_fn, gr = log_lik_grad, 
+                data = old_age_data, method = "L-BFGS-B", 
+                lower = c(.Machine$double.eps, .Machine$double.eps), upper = c(5,5))
+```
+
+Plug in params to get fitted mortality rates 
+```{r}
+get_fitted_mx <- function(a,b) {
+  
+  x <- 80:110
+  Mx <- ( a*exp(b*( (x+0.5) - 80) ) ) / ( 1 + a*exp(b*( (x+0.5) - 80)) )
+  Mx <- cbind(x, Mx)
+  
+  return(Mx)
+}
+
+fitted_mx <- get_fitted_mx(result$par[1], result$par[2])
+```
+

@@ -1,0 +1,207 @@
+---
+title: "Create Validation Data"
+format: html
+editor: visual
+---
+
+```{r}
+library(here)
+library(tidyverse)
+```
+
+```{r}
+ path <- here("data") 
+
+# idl datasets:  
+fra_idl <- read.table(paste(path, "idl_fra_death_105.txt", sep='/'), sep=';', 
+                         header = TRUE)
+dnk_idl <- read.table(paste(path, "idl_dnk_death_105.txt", sep='/'), sep=';', 
+                          header = TRUE)
+nor_idl <- read.table(paste(path, "idl_nor_death_105.txt", sep='/'), sep=';', 
+                         header = TRUE)
+swe_idl <- read.table(paste(path, "idl_swe_death_105.txt", sep='/'), sep=';', 
+                         header = TRUE)
+us_idl <- read.table(paste(path, "idl_usa_death_105.txt", sep='/'), sep=';', 
+                     header = TRUE)
+
+# hmd datasets:
+fra_deaths_hmd <- read.table(paste(path, "FRATNPdeath.txt", sep='/'), sep=',', 
+                                header = TRUE)
+fra_expo_hmd <- read.table(paste(path, "FRAExposures_1x1.txt", sep='/'), sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+fra_expo_cohort_hmd <- read.table(paste(path, "FRAExposures_lexis.txt", sep='/'), 
+                                  sep='', 
+                                  header = TRUE, stringsAsFactors = FALSE, skip = 2)
+
+dnk_deaths_hmd <- read.table(paste(path, "DNKdeath.txt", sep='/'), sep=',', 
+                                header = TRUE)
+dnk_expo_hmd <- read.table(paste(path, "DNKExposures_1x1.txt", sep='/'), sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+dnk_expo_cohort_hmd <- read.table(paste(path, "DNKExposures_lexis.txt", sep='/'), 
+                                  sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+
+nor_deaths_hmd <- read.table(paste(path, "NORdeath.txt", sep='/'), sep=',', 
+                                header = TRUE)
+nor_expo_hmd <- read.table(paste(path, "NORExposures_1x1.txt", sep='/'), sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+nor_expo_cohort_hmd <- read.table(paste(path, "NORExposures_lexis.txt", sep='/'), 
+                                  sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+
+swe_deaths_hmd <- read.table(paste(path, "SWEdeath.txt", sep='/'), sep=',', 
+                                header = TRUE)
+swe_expo_hmd <- read.table(paste(path, "SWEExposures_1x1.txt", sep='/'), sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+swe_expo_cohort_hmd <- read.table(paste(path, "SWEExposures_lexis.txt", sep='/'), 
+                                  sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+
+us_deaths_hmd <- read.table(paste(path, "USAdeath.txt", sep='/'), sep=',', 
+                                header = TRUE)
+us_expo_hmd <- read.table(paste(path, "USAExposures_1x1.txt", sep='/'), sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+us_expo_cohort_hmd <- read.table(paste(path, "USAExposures_lexis.txt", sep='/'), 
+                                 sep='', 
+                              header = TRUE, stringsAsFactors = FALSE, skip = 2)
+
+# SSA dataset:
+ # will load later
+
+```
+
+```{r}
+countries <- c("fra", "dnk", "swe", "nor", "us")
+```
+
+Looking for which countries have unknown death ages
+
+```{r}
+for (country in countries) {
+  death_data <- get(paste(country, "deaths_hmd", sep = '_'))
+  if (any(death_data$Age == "UNK")) {
+    print(country)
+  }
+}
+```
+
+Looks like they all do. This means we'll have to do some extra preparation.
+
+Adjust raw death counts
+
+```{r}
+redistribute_unknown <- function(data) {
+  
+}
+
+adjust_raw_data <- function(data) {
+  
+}
+```
+
+Merging function for deaths and exposure data for each country
+
+```{r}
+combine_expo_death_data <- function(death_data, expo_data) {
+  expo_long <- pivot_longer(expo_data, cols = c('Female', 'Male', 'Total'),
+                              names_to = "Sex", values_to = "Exposure")
+
+  expo_long <- expo_long |>
+    mutate(Sex = ifelse(Sex == "Female", "f", 
+                      ifelse(Sex == "Male", "m", 
+                             ifelse(Sex == "Total", "b", Sex)))) |>
+    mutate(Age = ifelse(Age == "110+", "110", Age)) |>
+    mutate(Age = as.integer(Age)) |>
+    filter(!Sex == 'b')
+
+  deaths <- death_data |> 
+    filter(LDB == 1) |>
+    select(Year, Age, Sex, Deaths) |>
+    filter(Age != "TOT" & Age != "UNK") |>
+    mutate(Age = as.integer(Age))
+  
+  combined_df <- expo_long |>
+    left_join(deaths, by = c("Year", "Age", "Sex")) |>
+    mutate(Deaths = as.integer(Deaths))
+  
+  return(combined_df)
+}
+```
+
+```{r}
+hmd_list <- list()
+
+for (country in countries) {
+  death_data <- get(paste(country, "deaths_hmd", sep = '_'))
+  expo_data <- get(paste(country, "expo_hmd", sep = '_'))
+  combined_data <- combine_expo_death_data(death_data, expo_data)
+  hmd_list[[country]] <- combined_data
+}
+  
+```
+
+Merging function for all countries
+
+```{r}
+merge_data_list <- function(data_list) {
+  
+  # add a column to each dataframe to identify the country
+  data_list <- lapply(names(data_list), function(country) {
+    df <- data_list[[country]]
+    df$country <- country
+    return(df)
+  })
+  
+  merged_data <- do.call(rbind, data_list)
+}
+
+hmd_data <- merge_data_list(hmd_list)
+```
+
+Preparing the IDL data
+
+```{r}
+prep_idl <- function(idl_data) {
+  cleaned_data <- idl_data |>
+    group_by(DEATH_YEAR, AGEYEARS, SEX) |>
+    summarise(Deaths = n())
+}
+
+idl_list <- list()
+for (country in countries) {
+  data <- get(paste(country, "idl", sep = '_'))
+  cleaned_data <- prep_idl(data)
+  idl_list[[country]] <- cleaned_data
+}
+
+idl_data <- merge_data_list(idl_list)
+```
+
+```{r}
+create_period_val_data <- function(hmd_data, idl_data) {
+  idl_data <- idl_data |>
+    rename(
+      Year = DEATH_YEAR,
+      Sex = SEX,
+      Age = AGEYEARS
+    )
+  
+  joined_data <- hmd_data |>
+    left_join(idl_data, by = c("Year", "country", "Sex", "Age"), suffix = c("", "_idl"))
+
+  # replace Deaths values in hmd_data with those from idl_data
+  joined_data <- joined_data |>
+    mutate(Deaths = if_else(!is.na(Deaths_idl), Deaths_idl, Deaths)) #%>%
+    #select(-Deaths_idl)
+  
+  return(joined_data)
+}
+
+period_val <- create_period_val_data(hmd_data, idl_data)
+```
+
+```{r}
+create_cohort_val_data <- function(hmd_list, idl_list) {
+  
+}
+```
