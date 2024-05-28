@@ -1,0 +1,13 @@
+---
+title: "Model Validation"
+format: html
+editor: visual
+---
+
+## Plan for this file
+
+-   Fit all selected models to data for ages 80+ in each country and each year available
+
+-   Get AIC/BIC by country and pooled
+
+-   Do k-fold cross-validation to get out of sample mean squared error

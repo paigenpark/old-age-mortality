@@ -9,6 +9,8 @@ library(here)
 library(tidyverse)
 ```
 
+Load in raw data
+
 ```{r}
  path <- here("data") 
 
@@ -74,29 +76,42 @@ us_expo_cohort_hmd <- read.table(paste(path, "USAExposures_lexis.txt", sep='/'),
 countries <- c("fra", "dnk", "swe", "nor", "us")
 ```
 
-Looking for which countries have unknown death ages
+TODO: Adjust raw death counts according to HMD methods protocol
 
-```{r}
-for (country in countries) {
-  death_data <- get(paste(country, "deaths_hmd", sep = '_'))
-  if (any(death_data$Age == "UNK")) {
-    print(country)
+-   Currently only using data that doesn't require adjustment
+
+```{r, eval=FALSE}
+redistribute_unknown <- function(data) {
   }
-}
+
 ```
 
-Looks like they all do. This means we'll have to do some extra preparation.
-
-Adjust raw death counts
+Prep raw data
 
 ```{r}
-redistribute_unknown <- function(data) {
-  
+# drop cases without 1x1 counts, with unknown age deaths, & with lexis rectangles rather than triangles
+cleaned_deaths_list <- list()
+for (country in countries) {
+  data <- get(paste(country, "deaths_hmd", sep = '_'))
+  years_to_remove <- data |>
+    filter(
+      (AgeInterval != "1" & AgeInterval != "+") | 
+      YearInterval != 1 | 
+      Age == "UNK" | 
+      Age == "TOT" | 
+      (Lexis != "TL" & Lexis != "TU")
+    ) |>
+    pull(Year)
+
+  cleaned_deaths_list[[country]] <- data |>
+    filter(!(Year %in% years_to_remove))
 }
 
-adjust_raw_data <- function(data) {
-  
-}
+# US has 0 cases left after this filtering - I think I'll just try to use SSA data instead of HMD
+
+# get period death counts 
+
+# get cohort death counts 
 ```
 
 Merging function for deaths and exposure data for each country
