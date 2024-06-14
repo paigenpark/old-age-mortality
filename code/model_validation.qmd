@@ -11,3 +11,30 @@ editor: visual
 -   Get AIC/BIC by country and pooled
 
 -   Do k-fold cross-validation to get out of sample mean squared error
+
+```{r}
+library(here)
+library(tidyverse)
+path <- here("code")
+```
+
+```{r}
+# source and test functions
+source(paste(path, "model_fitting_functions.R", sep='/'))
+test_file(paste(path, "unit_testing.R", sep='/'))
+```
+
+```{r}
+# load in prepared data (for oldest ages only)
+data_path <- here("data")
+period_data <- read_csv(paste(data_path, "period_validation_data.csv", sep='/'))
+```
+
+```{r}
+# fit all models using HMD fitting procedure 
+
+kannisto_fit <- fit_all_kannisto(period_data)
+
+# logistic_fit <- fit_logistic(data)
+
+```

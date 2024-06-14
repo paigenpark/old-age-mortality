@@ -1,0 +1,37 @@
+---
+title: "EDA"
+format: html
+editor: visual
+---
+
+## Load in Cleaned Data and Packages
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+```{r}
+data_path <- here("data")
+period_data <- read_csv(paste(data_path, "period_validation_data.csv", sep="/"))
+cohort_data <- read_csv(paste(data_path, "cohort_validation_data.csv", sep="/"))                        
+```
+
+## Visualize Validation Data
+
+```{r}
+selected_country <- "fra"
+selected_year <- 1982 
+
+filtered_data <- period_data |>
+  filter(country == selected_country, Year == selected_year) |>
+  mutate(rate = (Period_Deaths / Exposure))
+
+ggplot(filtered_data, aes(x = Age, y = rate)) +
+  geom_line() +
+  facet_wrap(~ Sex) +
+  labs(title = paste("Death Rate Across Age in France for the Year 1982"),
+       x = "Age",
+       y = "Death Rate") +
+  theme_minimal()
+```
