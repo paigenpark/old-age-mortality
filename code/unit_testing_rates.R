@@ -5,7 +5,7 @@ library(tidyverse)
 
 # source file containing functions
 path <- here("code")
-source(paste(path, "model_fitting_functions.R", sep='/'))
+source(paste(path, "model_fitting_functions_rates.R", sep='/'))
 
 # read in test data
 data_path <- here("data") 

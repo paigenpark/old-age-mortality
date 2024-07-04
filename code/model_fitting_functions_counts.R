@@ -2,6 +2,11 @@
 # Generic functions 
 ##########################
 
+## TODO
+# This file is currently identical to the model_fitting_functions_rates.R file.
+# Needs to be updated with logliklihood for counts, but I'm not sure how to set 
+# that up yet (see pages 31 and 32 of Feehan 2018)
+
 log_lik_fn <- function(params, data, fn) {
   x <- data$Age
   Dx <- data$Deaths
@@ -126,7 +131,7 @@ kannisto_get_mx <- function(a,b) {
 }
 
 fit_kannisto <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
-  initial_params <- get_inital_params(log_lik_fn = log_lik_fn, data = data, fn = fn)
+  initial_params <- get_initial_params(log_lik_fn = log_lik_fn, data = data, fn = fn)
   optim_result <- optim(par = initial_params, 
                         fn = function(params) log_lik_fn(params, data, fn),
                         gr = function(params) grad_fn(params, data, fn), 

@@ -15,13 +15,14 @@ editor: visual
 ```{r}
 library(here)
 library(tidyverse)
+library(testthat)
 path <- here("code")
 ```
 
 ```{r}
 # source and test functions
-source(paste(path, "model_fitting_functions.R", sep='/'))
-test_file(paste(path, "unit_testing.R", sep='/'))
+source(paste(path, "model_fitting_functions_rates.R", sep='/'))
+test_file(paste(path, "unit_testing_rates.R", sep='/'))
 ```
 
 ```{r}
@@ -31,10 +32,162 @@ period_data <- read_csv(paste(data_path, "period_validation_data.csv", sep='/'))
 ```
 
 ```{r}
-# fit all models using HMD fitting procedure 
+# get rid of any NAs before fitting 
+period_data <- period_data |>
+  filter(!is.na(Deaths), !is.na(Exposure))
+```
 
+## Kannisto
+
+```{r}
+# fit kannisto model
 kannisto_fit <- fit_all_kannisto(period_data)
+```
 
-# logistic_fit <- fit_logistic(data)
+```{r}
+kannisto_fit <- kannisto_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
 
+```{r}
+# plot my fit against HMD fit (they should be pretty close to the same)
+hmd_smoothed_fra <- read.table(paste(data_path, "fltper_1x1.txt", sep='/'), 
+                               sep='', header = TRUE, stringsAsFactors = FALSE,
+                               skip = 2)
+
+hmd_smoothed_fra <- hmd_smoothed_fra |>
+  mutate(Age = ifelse(Age == "110+", "110", Age)) |>
+  mutate(Age = as.numeric(Age)) |>
+  filter(Age >= 80)
+```
+
+```{r}
+years_to_plot = c(1980, 1990, 2000, 2004)
+# set up data for plotting
+hmd_filtered <- hmd_smoothed_fra |>
+  filter(Year %in% years_to_plot) |>
+  mutate(Mx_hmd = as.numeric(mx))
+
+kannisto_filtered <- kannisto_fit |>
+  filter(country == "fra", Year %in% years_to_plot, Sex == "f") |>
+  unnest(fitted_rates) |>
+  rename(my_kannisto_mx = fitted_rates_Mx)
+
+joint_filtered <- cbind(hmd_filtered, kannisto_filtered)
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(Mx_hmd, my_kannisto_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r}
+custom_labels <- c("Mx_hmd" = "HMD Rates", "my_kannisto_mx" = "My Kannisto Rates")
+
+ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, group = Type)) +
+  geom_line(size = 1) +
+  labs(# title = "Comparison of HMD and My Fit",
+       x = "Age",
+       y = "Rates",
+       color = "Legend") +
+  theme_minimal() +
+  facet_wrap(~ Year, scales = "free_y") +
+  scale_color_manual(values = c("Mx_hmd" = "blue", "my_kannisto_mx" = "red"),
+                     labels = custom_labels)
+```
+
+## Beard
+
+```{r}
+# fit beard model
+beard_fit <- fit_all_beard(period_data)
+```
+
+```{r}
+beard_fit <- beard_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
+
+```{r}
+beard_filtered <- beard_fit |>
+  filter(country == "fra", Year %in% years_to_plot, Sex == "f") |>
+  unnest(fitted_rates) |>
+  rename(beard_mx = fitted_rates_Mx)
+```
+
+```{r}
+joint_filtered <- cbind(hmd_filtered, kannisto_filtered, beard_filtered)
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(Mx_hmd, my_kannisto_mx, beard_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r}
+custom_labels <- c("Mx_hmd" = "HMD Rates", "my_kannisto_mx" = "My Kannisto Rates", "beard_mx" = "Beard")
+
+ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, group = Type)) +
+  geom_line(size = 1) +
+  labs(# title = "Comparison of HMD and My Fit",
+       x = "Age",
+       y = "Rates",
+       color = "Legend") +
+  theme_minimal() +
+  facet_wrap(~ Year, scales = "free_y") +
+  scale_color_manual(values = c("Mx_hmd" = "blue", "my_kannisto_mx" = "red", "beard_mx" = "grey"),
+                     labels = custom_labels)
+```
+
+## Plot with unsmoothed rates 
+
+```{r}
+filtered_unsmoothed <- period_data |>
+  filter(country == "fra", Year %in% years_to_plot, Sex == "f") |>
+  mutate(unsmoothed_mx = Deaths / Exposure) |>
+  mutate_all(~replace(., is.nan(.), 0)) 
+
+new_row <- data.frame(Year = 1980, Age = 110, Sex = "f", Deaths = 0, Exposure = 0, 
+                      country = "fra", unsmoothed_mx = 0)
+
+filtered_unsmoothed <- rbind(filtered_unsmoothed, new_row)
+
+filtered_unsmoothed <- filtered_unsmoothed |>
+  arrange(Year, Age)
+```
+
+```{r}
+joint_filtered <- cbind(hmd_filtered, kannisto_filtered, beard_filtered, filtered_unsmoothed)
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(Mx_hmd, my_kannisto_mx, beard_mx, unsmoothed_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r}
+custom_labels <- c("my_kannisto_mx" = "Kannisto", 
+                   "beard_mx" = "Beard", "unsmoothed_mx" = "Raw rates")
+
+ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, group = Type)) +
+  geom_line(data = subset(joint_filtered, Type != "unsmoothed_mx", Type != "Hmd_Mx"), 
+            size = 1) +
+  geom_point(data = subset(joint_filtered, Type == "unsmoothed_mx"), size = 1) +
+  labs(# title = "Comparison of HMD and My Fit",
+       x = "Age",
+       y = "Rates",
+       color = "Legend") +
+  theme_minimal() +
+  facet_wrap(~ Year, scales = "free_y") +
+  scale_color_manual(values = c("my_kannisto_mx" = "blue",
+                                "beard_mx" = "black", "unsmoothed_mx" = "grey"),
+                     labels = custom_labels)
 ```

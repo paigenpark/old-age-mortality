@@ -17,21 +17,128 @@ period_data <- read_csv(paste(data_path, "period_validation_data.csv", sep="/"))
 cohort_data <- read_csv(paste(data_path, "cohort_validation_data.csv", sep="/"))                        
 ```
 
-## Visualize Validation Data
+## Visualize Period Validation Data
 
 ```{r}
 selected_country <- "fra"
 selected_year <- 1982 
 
-filtered_data <- period_data |>
+period_data_with_mx <- period_data |>
   filter(country == selected_country, Year == selected_year) |>
-  mutate(rate = (Period_Deaths / Exposure))
+  mutate(rate = (Deaths / Exposure))
 
-ggplot(filtered_data, aes(x = Age, y = rate)) +
+ggplot(period_data_with_mx, aes(x = Age, y = rate)) +
   geom_line() +
   facet_wrap(~ Sex) +
-  labs(title = paste("Death Rate Across Age in France for the Year 1982"),
+  labs(title = paste("Period Death Rate Across Age in France for the Year 1982"),
        x = "Age",
        y = "Death Rate") +
   theme_minimal()
+```
+
+## Visualize Cohort Validation Data
+
+#### France
+
+```{r}
+selected_country <- "fra"
+# data before cohort 1885 doesn't look great and cohorts aren't complete after about 1910
+selected_cohorts <- c(1885:1900)
+selected_sex <- "f"
+
+cohort_data_with_mx <- cohort_data |>
+  filter(country == selected_country, 
+         Sex == selected_sex) |>
+  mutate(rate = (Deaths / Exposure)) |>
+  filter(Cohort %in% selected_cohorts)
+
+ggplot(cohort_data_with_mx, aes(x = Age, y = rate)) +
+  geom_line() +
+  facet_wrap(~ Cohort) +
+  labs(#title = paste("Cohort Death Rate Across Age in France for the Year 1875"),
+       x = "Age",
+       y = "Death Rate") +
+  theme_minimal()
+```
+
+#### Denmark
+
+```{r}
+selected_country <- "dnk"
+# 1879-1895 looks most complete
+selected_cohorts <- c(1879:1895)
+selected_sex <- "f"
+
+cohort_data_with_mx <- cohort_data |>
+  filter(country == selected_country, 
+         Sex == selected_sex) |>
+  mutate(rate = (Deaths / Exposure)) |>
+  filter(Cohort %in% selected_cohorts)
+
+ggplot(cohort_data_with_mx, aes(x = Age, y = rate)) +
+  geom_line() +
+  facet_wrap(~ Cohort) +
+  labs(#title = paste("Cohort Death Rate Across Age in France for the Year 1875"),
+       x = "Age",
+       y = "Death Rate") +
+  theme_minimal()
+```
+
+#### Sweden
+
+```{r}
+selected_country <- "swe"
+# 1850-1898 looks most complete
+selected_cohorts <- c(1850:1898)
+selected_sex <- "f"
+
+cohort_data_with_mx <- cohort_data |>
+  filter(country == selected_country, 
+         Sex == selected_sex) |>
+  mutate(rate = (Deaths / Exposure)) |>
+  filter(Cohort %in% selected_cohorts)
+
+ggplot(cohort_data_with_mx, aes(x = Age, y = rate)) +
+  geom_line() +
+  facet_wrap(~ Cohort) +
+  labs(#title = paste("Cohort Death Rate Across Age in France for the Year 1875"),
+       x = "Age",
+       y = "Death Rate") +
+  theme_minimal()
+```
+
+#### Norway
+
+```{r}
+selected_country <- "nor"
+# really none of the Norway cohort data looks that great 
+selected_cohorts <- c(1800:2000)
+selected_sex <- "f"
+
+cohort_data_with_mx <- cohort_data |>
+  filter(country == selected_country, 
+         Sex == selected_sex) |>
+  mutate(rate = (Deaths / Exposure)) |>
+  filter(Cohort %in% selected_cohorts)
+
+ggplot(cohort_data_with_mx, aes(x = Age, y = rate)) +
+  geom_line() +
+  facet_wrap(~ Cohort) +
+  labs(#title = paste("Cohort Death Rate Across Age in France for the Year 1875"),
+       x = "Age",
+       y = "Death Rate") +
+  theme_minimal()
+```
+
+## Summarize Period Data
+
+```{r}
+head(period_data)
+
+```
+
+## Summarize Cohort Data
+
+```{r}
+head(cohort_data)
 ```

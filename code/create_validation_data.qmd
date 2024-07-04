@@ -29,7 +29,7 @@ fra_deaths_hmd <- read.table(paste(path, "FRATNPdeath.txt", sep='/'), sep=',',
                                 header = TRUE)
 fra_expo_hmd <- read.table(paste(path, "FRAExposures_1x1.txt", sep='/'), sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
-fra_expo_cohort_hmd <- read.table(paste(path, "FRAcExposures_1x1.txt", sep='/'), 
+fra_expo_cohort_hmd <- read.table(paste(path, "FRAExposures_lexis.txt", sep='/'), 
                                   sep='', 
                                   header = TRUE, stringsAsFactors = FALSE, skip = 2)
 
@@ -37,7 +37,7 @@ dnk_deaths_hmd <- read.table(paste(path, "DNKdeath.txt", sep='/'), sep=',',
                                 header = TRUE)
 dnk_expo_hmd <- read.table(paste(path, "DNKExposures_1x1.txt", sep='/'), sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
-dnk_expo_cohort_hmd <- read.table(paste(path, "DNKcExposures_1x1.txt", sep='/'), 
+dnk_expo_cohort_hmd <- read.table(paste(path, "DNKExposures_lexis.txt", sep='/'), 
                                   sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
 
@@ -45,7 +45,7 @@ nor_deaths_hmd <- read.table(paste(path, "NORdeath.txt", sep='/'), sep=',',
                                 header = TRUE)
 nor_expo_hmd <- read.table(paste(path, "NORExposures_1x1.txt", sep='/'), sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
-nor_expo_cohort_hmd <- read.table(paste(path, "NORcExposures_1x1.txt", sep='/'), 
+nor_expo_cohort_hmd <- read.table(paste(path, "NORExposures_lexis.txt", sep='/'), 
                                   sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
 
@@ -53,7 +53,7 @@ swe_deaths_hmd <- read.table(paste(path, "SWEdeath.txt", sep='/'), sep=',',
                                 header = TRUE)
 swe_expo_hmd <- read.table(paste(path, "SWEExposures_1x1.txt", sep='/'), sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
-swe_expo_cohort_hmd <- read.table(paste(path, "SWEcExposures_1x1.txt", sep='/'), 
+swe_expo_cohort_hmd <- read.table(paste(path, "SWEExposures_lexis.txt", sep='/'), 
                                   sep='', 
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
 
@@ -65,6 +65,8 @@ countries <- c("fra", "dnk", "nor", "swe")
 
 ## HMD Preparation
 
+The first step in preparing the validation data for this project is selecting the highest quality data from the HMD. This means filtering out any data in the HMD input data that is not available by single year of age or time, with deaths at an unknown age, and with only Lexis rectangles available rather than Lexis triangles.
+
 ```{r}
 # drop cases without 1x1 counts, with unknown age deaths, & with lexis rectangles rather than triangles
 cleaned_deaths_list <- list()
@@ -74,7 +76,8 @@ for (country in countries) {
     filter(
       (AgeInterval != "1" & AgeInterval != "+" & AgeInterval != ".") | 
       YearInterval != 1 | 
-      Age == "UNK" |
+      Age == "UNK" | # this line gets rid of 
+                      # many years & is why the data seems incomplete
       (Lexis != "TL" & Lexis != "TU" & Lexis != ".") |
       LDB != 1
       ) |>
@@ -85,64 +88,41 @@ for (country in countries) {
 }
 ```
 
+Using the raw input data requires manually calculating period and cohort death counts by manipulating the Lexis triangles according to the HMD procedure.
+
 ```{r}
-# get period death counts 
-df_with_period <- lapply(cleaned_deaths_list, function(data) {
+# get period death counts by summing the upper and lower triangles for each 
+# age, year, and sex 
+dfs_with_period <- lapply(cleaned_deaths_list, function(data) {
   data |>
     group_by(Age, Year, Sex) |>
     mutate(Period_Deaths = sum(Deaths)) |>
-    ungroup()
+    ungroup() |>
+    filter(Lexis == "TL")  
   })
-```
 
-```{r}
-# get cohort death counts 
-df_with_cohort <- lapply(df_with_period, function(data) {
-  data %>%
+# get cohort death counts by summing lower triangle in year t
+# and upper trinangle in year t+1
+dfs_with_cohort <- lapply(cleaned_deaths_list, function(data) {
+  data |>
     arrange(Age, Sex, Year, Lexis) |>
     group_by(Age, Sex) |>
     mutate(TL_Deaths = if_else(Lexis == "TL", Deaths, NA_real_)) |>
-    mutate(TU_Deaths_Next_Year = if_else(Lexis == "TU", lead(Deaths, 2), NA_real_)) |>
+    mutate(TU_Deaths_Next_Year = if_else(Lexis == "TU" & 
+                                           (lead(Year, 2) == Year + 1), 
+                                         lead(Deaths, 2), NA_real_)) |>
     mutate(TU_Deaths_Next_Year = lead(TU_Deaths_Next_Year)) |>
     mutate(Cohort_Deaths = TL_Deaths + TU_Deaths_Next_Year) |>
-    ungroup()
+    ungroup() |>
+    filter(Lexis == "TL")  |>
+    select(-TL_Deaths, -TU_Deaths_Next_Year)
 })
-
-# delete extra rows and columns
-death_data <- lapply(df_with_cohort, function(data) {
-  data |>
-  filter(Lexis == "TL")  |>
-  select(-TL_Deaths, -TU_Deaths_Next_Year)
-  })
 ```
 
-Merging function for deaths and exposure data for each country
+Finally, I set up a function that will allow us to merge lists of dataframes from different countries into a single dataframe. This will make future adjustments of the data easier.
 
 ```{r}
-combine_expo_death_data <- function(death_data, expo_data) {
-  expo_long <- pivot_longer(expo_data, cols = c('Female', 'Male', 'Total'),
-                              names_to = "Sex", values_to = "Exposure")
-
-  expo_long <- expo_long |>
-    mutate(Sex = ifelse(Sex == "Female", "f", 
-                      ifelse(Sex == "Male", "m", 
-                             ifelse(Sex == "Total", "b", Sex)))) |>
-    mutate(Age = ifelse(Age == "110+", "110", Age)) |>
-    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex)) |>
-    filter(!Sex == 'b')
-  
-  deaths <- death_data |> 
-    select(Year, Age, Sex, Period_Deaths, Cohort_Deaths) |>
-    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex))
-
-  combined_df <- deaths |>
-    full_join(expo_long, by = c("Year", "Age", "Sex")) 
-  
-  return(combined_df)
-}
-```
-
-```{r}
+# function to merge a list of dataframes into a single df
 merge_data_list <- function(data_list) {
   
   # add a column to each dataframe to identify the country
@@ -158,16 +138,41 @@ merge_data_list <- function(data_list) {
 
 #### Prepare period data
 
-```{r}
-hmd_list <- list()
+To prepare the period data, I need to first merge the input death count data with the HMD 1x1 exposure data. This requires reformatting the exposure data to a long format, recoding a few variables, and reclassifying variable types. Finally, the datasets are merged with a left join, retaining all cases in the deaths dataset.
 
+```{r}
+# period merging function to merge death and exposure data 
+combine_expo_death_data_per <- function(death_data, expo_data) {
+  expo_long <- pivot_longer(expo_data, cols = c('Female', 'Male', 'Total'),
+                              names_to = "Sex", values_to = "Exposure")
+
+  expo_long <- expo_long |>
+    mutate(Sex = ifelse(Sex == "Female", "f", 
+                      ifelse(Sex == "Male", "m", 
+                             ifelse(Sex == "Total", "b", Sex)))) |>
+    mutate(Age = ifelse(Age == "110+", "110", Age)) |>
+    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex)) |>
+    filter(!Sex == 'b')
+  
+  deaths <- death_data |> 
+    select(Year, Age, Sex, Period_Deaths) |>
+    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex))
+
+  combined_df <- deaths |>
+    left_join(expo_long, by = c("Year", "Age", "Sex"))
+    # full_join(expo_long, by = c("Year", "Age", "Sex")) 
+  
+  return(combined_df)
+}
+```
+
+```{r}
 # merge death and exposure data for each country 
+hmd_list <- list()
 for (country in countries) {
   exposure <- get(paste(country, "expo_hmd", sep = '_'))
-  deaths <- death_data[[country]]
-  combined_data <- combine_expo_death_data(deaths, exposure)
-  # combined_data <- combined_data |>
-    # filter(!is.na(Period_Deaths))
+  deaths <- dfs_with_period[[country]]
+  combined_data <- combine_expo_death_data_per(deaths, exposure)
   hmd_list[[country]] <- combined_data
 }
 
@@ -177,18 +182,45 @@ hmd_period_data <- merge_data_list(hmd_list)
 
 #### Prepare cohort data
 
+I prepare the cohort data in almost exactly the same way, except I create a cohort variable in the death data (by subtracting age from year) and merge on cohort rather than year.
+
+```{r}
+combine_expo_death_data_coh <- function(death_data, expo_data) {
+  expo_long <- pivot_longer(expo_data, cols = c('Female', 'Male', 'Total'),
+                              names_to = "Sex", values_to = "Exposure")
+
+  expo_long <- expo_long |>
+    mutate(Sex = ifelse(Sex == "Female", "f", 
+                      ifelse(Sex == "Male", "m", 
+                             ifelse(Sex == "Total", "b", Sex)))) |>
+    mutate(Age = ifelse(Age == "110+", "110", Age)) |>
+    filter(!Cohort == ".") |>
+    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex),
+           Cohort = as.integer(Cohort)) |>
+    filter(!Sex == 'b') |>
+    group_by(Cohort, Age, Sex) |>
+    summarise(Exposure = sum(Exposure, na.rm = TRUE))
+  
+  deaths <- death_data |> 
+    select(Year, Age, Sex, Cohort_Deaths) |>
+    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex)) |>
+    mutate(Cohort = (Year - Age))
+
+  combined_df <- deaths |>
+    full_join(expo_long, by = c("Cohort", "Age", "Sex")) 
+  
+  return(combined_df)
+}
+```
+
 ```{r}
 hmd_list <- list()
 
 # merge death and exposure data for each country 
 for (country in countries) {
   exposure <- get(paste(country, "expo_cohort_hmd", sep = '_'))
-  deaths <- death_data[[country]]
-  combined_data <- combine_expo_death_data(deaths, exposure)
-  combined_data <- combined_data |>
-    filter(!is.na(Cohort_Deaths)) |>
-    filter(!is.na(Exposure)) |>
-    mutate(Birth_Year = (Year - Age)) # adding birth year column
+  deaths <- dfs_with_cohort[[country]]
+  combined_data <- combine_expo_death_data_coh(deaths, exposure)
   hmd_list[[country]] <- combined_data
 }
 
@@ -200,22 +232,27 @@ hmd_cohort_data <- merge_data_list(hmd_list)
 
 #### Prepare period data
 
+The International Database of Longevity (IDL) contains detailed and carefully validated data on deaths over 105 years of age. Each row represents one death, which means that merging with the HMD data requires aggregating deaths by year, age, and sex. The prep_period_idl() function does this, filling in any missing year, age, sex combinations with 0. This function is run on each country and the final list is merged into a single dataframe.
+
 ```{r}
 prep_period_idl <- function(idl_data) {
   cleaned_data <- idl_data |>
     group_by(DEATH_YEAR, AGEYEARS, SEX) |>
     summarise(Deaths = n(), .groups = 'keep') |>
-    group_by(SEX, AGEYEARS) |> # regroup by sex and age
-    complete(DEATH_YEAR = seq(min(DEATH_YEAR), max(DEATH_YEAR), 1),
-             fill = list(Deaths = 0)) |>
     ungroup() |>
+    complete(DEATH_YEAR = seq(min(idl_data$DEATH_YEAR), 
+                              max(idl_data$DEATH_YEAR), 1),
+             AGEYEARS = seq(min(idl_data$AGEYEARS), 
+                            max(idl_data$AGEYEARS), 1),
+             SEX = unique(idl_data$SEX),
+             fill = list(Deaths = 0)) |>
     group_by(DEATH_YEAR, AGEYEARS, SEX)
-  
   return(cleaned_data)
 }
 
 idl_period_list <- list()
 for (country in countries) {
+  print(country)
   data <- get(paste(country, "idl", sep = '_'))
   cleaned_data <- prep_period_idl(data)
   idl_period_list[[country]] <- cleaned_data
@@ -226,11 +263,22 @@ idl_period_data <- merge_data_list(idl_period_list)
 
 #### Prepare cohort data
 
+The cohort IDL data is prepared in a very similar way, but birth year is used rather than death year.
+
 ```{r}
 prep_cohort_idl <- function(idl_data) {
   cleaned_data <- idl_data |>
+    #rename(Cohort = BIRTH_YEAR) |>
     group_by(BIRTH_YEAR, AGEYEARS, SEX) |>
-    summarise(Deaths = n())
+    summarise(Deaths = n(), .groups = 'keep') |>
+    ungroup() |>
+    complete(BIRTH_YEAR = seq(min(idl_data$BIRTH_YEAR), 
+                              max(idl_data$BIRTH_YEAR), 1),
+             AGEYEARS = seq(min(idl_data$AGEYEARS), 
+                            max(idl_data$AGEYEARS), 1),
+             SEX = unique(idl_data$SEX),
+             fill = list(Deaths = 0)) |>
+    group_by(BIRTH_YEAR, AGEYEARS, SEX)
   return(cleaned_data)
 }
 
@@ -246,31 +294,30 @@ idl_cohort_data <- merge_data_list(idl_cohort_list)
 
 #### Check consistency between IDL and HMD
 
-TODO: Need to come back and aggregate the IDL values after 2004 for France when death counts in the HMD input data switch to 105+
+Before moving on to the next step, we want to make sure that the IDL death counts are similar to the HMD counts. We can compare them by calculating the difference in counts at each age/year/sex combination.
 
 ```{r}
 sum_idl_deaths <- function(data) {
-  print(data)
   filtered_data <- data |>
     filter(Year >= 2005, country == "fra") |>
     group_by(Year, Sex, country) |>
     summarise(Deaths = sum(Deaths))
-  print(filtered_data)
+  print(filtered_data) # 2017 female deaths should be 688 
   return(filtered_data)
 }
 
 replace_and_clean_deaths <- function(data, summarized_data) {
  
   # Replace Deaths for Age == 105
-  data <- data %>%
+  data <- data |>
     left_join(summarized_data, by = c("Year", "Sex", "country"))
    
-  data <- data %>%
-    mutate(Deaths = if_else(!is.na(Deaths.y), Deaths.y, Deaths.x)) %>%
+  data <- data |>
+    mutate(Deaths = if_else(!is.na(Deaths.y), Deaths.y, Deaths.x)) |>
     select(-Deaths.y, -Deaths.x)
   
   # Remove rows where Age > 105 for the matching cases
-  data <- data %>%
+  data <- data |>
     filter(!(Year %in% summarized_data$Year & 
              Sex %in% summarized_data$Sex & 
              country %in% summarized_data$country & 
@@ -289,14 +336,19 @@ create_data_for_comparison <- function(hmd_data, idl_data, sum_idl_deaths_fn, re
     mutate(Sex = ifelse(Sex == "F", "f", 
                       ifelse(Sex == "M", "m", Sex))) 
   
+  print(idl_data)
+  
   joined_data <- hmd_data |>
-    left_join(idl_data, by = c("Year", "country", "Sex", "Age")) |>
+    full_join(idl_data, by = c("Year", "country", "Sex", "Age")) |>
     filter(Age >= 105) |>
     filter(!is.na(Deaths)) |>
     filter(country != "swe") |>
     filter(country != "nor")
   
+  print(joined_data)
+  
   summarized_data <- sum_idl_deaths_fn(joined_data)
+  print(summarized_data)
   joined_data <- replace_and_clean_deaths(joined_data, summarized_data)
 
   # add difference column
@@ -326,6 +378,8 @@ ggplot(data_for_comparison, aes(x=Year, y=difference, color=as.factor(Age))) +
 
 ## Create period validation dataset
 
+To create the dataset that we'll use for validation, we need to merge the HMD and IDL data. For the period data, we'll join by year, country, age and sex for all years and countries that are in both datasets. Deaths from 105 to 122 will be replaced with deaths from the IDL, while all other ages will retain counts from the HMD.
+
 ```{r}
 create_period_val_data <- function(hmd_data, idl_data) {
   idl_data <- idl_data |>
@@ -337,18 +391,20 @@ create_period_val_data <- function(hmd_data, idl_data) {
     mutate(Sex = ifelse(Sex == "F", "f", 
                       ifelse(Sex == "M", "m", Sex)))
   
+  # gives a list of the year and country combos in IDL data
   combos_to_keep <- idl_data |>
     select(Year, country) |>
     distinct()
   
   joined_data <- hmd_data |>
     full_join(idl_data, by = c("Year", "country", "Sex", "Age")) |>
+    # returns all rows from dataframe with a match in combos_to_keep
     semi_join(combos_to_keep, by = c("Year", "country"))
 
   # replace Deaths values in hmd_data with those from idl_data
   joined_data <- joined_data |>
     mutate(Period_Deaths = if_else(!is.na(Deaths), Deaths, Period_Deaths)) |>
-    select(-Deaths, -Cohort_Deaths)
+    select(-Deaths)
 
   return(joined_data)
 }
@@ -360,32 +416,38 @@ period_val <- create_period_val_data(hmd_period_data, idl_period_data)
 
 ## Create cohort validation dataset
 
+The function to create the cohort dataset looks very similar to the period data function. The only difference is that datasets are joined by birth year rather than death year.
+
 ```{r}
 create_cohort_val_data <- function(hmd_data, idl_data) {
   idl_data <- idl_data |>
-      rename(
-        Birth_Year = BIRTH_YEAR,
-        Sex = SEX,
-        Age = AGEYEARS
-      ) |>
-      mutate(Sex = ifelse(Sex == "F", "f", 
-                        ifelse(Sex == "M", "m", Sex)))
+    rename(
+      Cohort = BIRTH_YEAR,
+      Sex = SEX,
+      Age = AGEYEARS
+    ) |>
+    mutate(Sex = ifelse(Sex == "F", "f", 
+                      ifelse(Sex == "M", "m", Sex)))
+
+  combos_to_keep <- idl_data |>
+    select(Cohort, country) |>
+    distinct()
+  print(combos_to_keep)
     
-    print(head(idl_data))
-    
-    joined_data <- hmd_data |>
-      left_join(idl_data, by = c("Birth_Year", "country", "Sex", "Age"))
-    
-    print(head(joined_data))
+  joined_data <- hmd_data |>
+    left_join(idl_data, by = c("Cohort", "country", "Sex", "Age")) |>
+    semi_join(combos_to_keep, by = c("Cohort", "country"))
+  print(joined_data)   
   
-    # replace Deaths values in hmd_data with those from idl_data
-    joined_data <- joined_data |>
-      mutate(Cohort_Deaths = if_else(!is.na(Deaths), Deaths, Cohort_Deaths)) |>
-      select(-Deaths, -Period_Deaths)
-      
-    print(head(joined_data))
-    return(joined_data)
-  }
+  # replace Deaths values in hmd_data with those from idl_data
+  joined_data <- joined_data |>
+    mutate(Cohort_Deaths = if_else(!is.na(Deaths), Deaths, Cohort_Deaths)) |>
+    select(-Deaths) |>
+    filter(!is.na(Year), !is.na(Cohort_Deaths))
+    
+  print(joined_data)
+  return(joined_data)
+}
 ```
 
 ```{r}
@@ -395,8 +457,6 @@ cohort_val <- create_cohort_val_data(hmd_cohort_data, idl_cohort_data)
 ## Check data quality
 
 #### Compare validation death rates to HMD Mx
-
-Load in Mx data
 
 ```{r}
 # read in Mx data from HMD
@@ -408,17 +468,10 @@ fra_cohort_mx <- read.table(paste(path, "FRAcMx_1x1.txt", sep='/'),
                               header = TRUE, stringsAsFactors = FALSE, skip = 2)
 ```
 
-Period checks for France
+To compare death rates from the validation data and the HMD data, we need to merge the HMD Mx data with our data. The functions below do this for both the period and cohort data.
 
 ```{r}
-# compare to Mx from period and cohort datasets I've created 
-period_val_with_mx <- period_val |>
-  mutate(Mx = (Period_Deaths / Exposure)) |>
-  filter(country == "fra")
-```
-
-```{r}
-combine_mx_death_data <- function(my_mx_data, hmd_mx_data) {
+combine_mx_death_data_per <- function(my_mx_data, hmd_mx_data) {
   hmd_mx_data <- pivot_longer(hmd_mx_data, cols = c('Female', 'Male', 'Total'),
                               names_to = "Sex", values_to = "Mx_hmd")
 
@@ -443,13 +496,75 @@ combine_mx_death_data <- function(my_mx_data, hmd_mx_data) {
 ```
 
 ```{r}
-combined_mx <- combine_mx_death_data(period_val_with_mx, fra_period_mx)
+combine_mx_death_data_coh <- function(my_mx_data, hmd_mx_data) {
+  hmd_mx_data <- pivot_longer(hmd_mx_data, cols = c('Female', 'Male', 'Total'),
+                              names_to = "Sex", values_to = "Mx_hmd")
+
+  hmd_mx_data <- hmd_mx_data |>
+    mutate(Sex = ifelse(Sex == "Female", "f", 
+                      ifelse(Sex == "Male", "m", 
+                             ifelse(Sex == "Total", "b", Sex)))) |>
+    mutate(Age = ifelse(Age == "110+", "110", Age)) |>
+    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex)) |>
+    filter(!Sex == 'b')
+
+  hmd_mx_data <- hmd_mx_data |>
+    mutate(Cohort = (Year - Age))
+    
+  my_mx_data <- my_mx_data |> 
+    select(Cohort, Age, Sex, Mx) |>
+    mutate(Cohort = as.integer(Cohort), Age = as.integer(Age), 
+           Sex = as.character(Sex))
+
+  combined_df <- my_mx_data |>
+    full_join(hmd_mx_data, by = c("Cohort", "Age", "Sex")) 
+  
+  return(combined_df)
+}
+```
+
+###### Period checks for France
+
+We need to slightly adjust our data for the checks by creating an Mx column and filtering to only include data from France.
+
+```{r}
+period_val_with_mx <- period_val |>
+  mutate(Mx = (Period_Deaths / Exposure)) |>
+  filter(country == "fra")
+```
+
+Combine data and calculate the difference between the HMD Mxs and our Mxs
+
+```{r}
+combined_mx <- combine_mx_death_data_per(period_val_with_mx, fra_period_mx)
 combined_mx$Mx <- round(combined_mx$Mx, digits = 6)
 combined_mx <- combined_mx |>
   mutate(difference = (as.numeric(Mx_hmd) - Mx))
 ```
 
-#### Data quality visualizations
+###### Cohort checks for France
+
+Do the same thing for cohorts
+
+```{r}
+cohort_val_with_mx <- cohort_val |>
+  mutate(Mx = (Cohort_Deaths / Exposure)) |>
+  filter(country == "fra") |>
+  mutate(Mx = ifelse(is.nan(Mx) | is.infinite(Mx), 0, Mx))
+```
+
+```{r}
+combined_mx_cohort <- combine_mx_death_data_coh(cohort_val_with_mx, fra_cohort_mx)
+combined_mx_cohort$Mx <- round(combined_mx_cohort$Mx, digits = 6)
+combined_mx_cohort <- combined_mx_cohort |>
+  mutate(difference = (as.numeric(Mx_hmd) - Mx))
+```
+
+#### Data quality visualizations: France only
+
+###### Period
+
+All ages comparison
 
 ```{r}
 ggplot(combined_mx, aes(x=Year, y=difference, color=Age)) +
@@ -458,9 +573,10 @@ ggplot(combined_mx, aes(x=Year, y=difference, color=Age)) +
   facet_wrap(~ Sex, scales = "free") +
   theme(plot.title = element_text(hjust = 0.5)) +
   labs(color = "Age") +
-  labs(y="Difference between HMD and Validation Mortality Rates") +
-  ggtitle("Difference between HMD Mortality Rates and \n Raw Validation Rates for All Ages in France")
+  labs(y="Difference between HMD and Validation Mortality Rates") 
 ```
+
+Ages under 80 comparison
 
 ```{r}
 combined_mx_younger <- combined_mx |>
@@ -474,8 +590,81 @@ ggplot(combined_mx_younger, aes(x=Year, y=difference, color=Age)) +
   facet_wrap(~ Sex, scales = "free") +
   theme(plot.title = element_text(hjust = 0.5)) +
   labs(color = "Age") +
-  labs(y="Difference between HMD and Validation Mortality Rates") +
-  ggtitle("Difference between HMD Mortality Rates and \n Raw Validation Rates for Unsmoothed Ages in France")
+  labs(y="Difference between HMD and Validation Mortality Rates")
+```
+
+###### Cohort
+
+All ages comparison
+
+```{r}
+ggplot(combined_mx_cohort, aes(x=Cohort, y=difference, color=Age)) +
+  geom_point(alpha = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~ Sex, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "Age") +
+  labs(y="Difference between HMD and Validation Mortality Rates") 
+```
+
+Under 80 comparison
+
+```{r}
+combined_mx_younger_cohort <- combined_mx_cohort |>
+  filter(Age <= 79) |>
+  # removing very small deviation from 0 
+  mutate(difference = ifelse((difference <= 0.00001), 0, difference))
+
+ggplot(combined_mx_younger_cohort, aes(x=Cohort, y=difference, color=Age)) +
+  geom_point(alpha = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~ Sex, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "Age") +
+  labs(y="Difference between HMD and Validation Mortality Rates")
+```
+
+Cohort years of highest quality according to EDA (All Ages)
+
+```{r}
+combined_mx_cohort_selective <- combined_mx_cohort |>
+  filter(Cohort >= 1885, Cohort <= 1898) 
+
+ggplot(combined_mx_cohort_selective, aes(x=Cohort, y=difference, color=Age)) +
+  geom_point(alpha = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~ Sex, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "Age") +
+  labs(title="Comparison Between HMD and Cohort Data Created for Validation - All Ages",
+  y="Difference between HMD and Validation Mortality Rates")
+```
+
+Cohort years of highest quality according to EDA (Under 80)
+
+```{r}
+combined_mx_younger_cohort_selective <- combined_mx_younger_cohort |>
+  filter(Cohort >= 1885, Cohort <= 1898) 
+
+ggplot(combined_mx_younger_cohort_selective, aes(x=Cohort, y=difference, color=Age)) +
+  geom_point(alpha = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~ Sex, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "Age") +
+  labs(title="Comparison Between HMD and Cohort Data Created for Validation - Under 80", 
+       y="Difference between HMD and Validation Mortality Rates")
+```
+
+Additional exploration of differences
+
+```{r}
+max_diff_obs <- combined_mx_younger_cohort |>
+  group_by(Sex) |>
+  slice_max(order_by = difference, n=Inf) |>
+  ungroup()
+
+print(max_diff_obs)
 ```
 
 ## Final cleaning
@@ -489,29 +678,131 @@ period_val <- period_val |>
 
 cohort_val <- cohort_val |>
   filter(Age >= 80) |>
-  arrange(country, Birth_Year, Age, Sex) 
+  arrange(country, Cohort, Age, Sex) 
 ```
 
-Remove rows with missing ages between 80 and 104
+Remove rows with missing ages between 80 and 104 and missing deaths
 
 ```{r}
-rows_with_missing_ages <- period_val %>%
-    group_by(Year, Sex, country) %>%
-    summarise(
-      missing_ages = all(!80:104 %in% Age)
-    ) %>%
-    filter(missing_ages) %>%
-    ungroup()
+# rows_with_missing_ages <- period_val |>
+#     group_by(Year, Sex, country) |>
+#     summarise(
+#       missing_ages = all(!80:104 %in% Age)
+#     ) |>
+#     filter(missing_ages) |>
+#     ungroup()
+# 
+# period_val <- period_val |>
+#     rowwise() |>
+#     filter(!(country %in% rows_with_missing_ages$country &
+#              Year %in% rows_with_missing_ages$Year &
+#              Sex %in% rows_with_missing_ages$Sex)) |>
+#     ungroup()
 
-period_val <- period_val %>%
-    rowwise() %>%
-    filter(!(country %in% rows_with_missing_ages$country &
-             Year %in% rows_with_missing_ages$Year &
-             Sex %in% rows_with_missing_ages$Sex)) %>%
-    ungroup()
+period_val <- period_val |>
+  rename(Deaths = Period_Deaths)
+```
+
+```{r}
+# rows_with_missing_ages <- cohort_val |>
+#     group_by(Cohort, Sex, country) |>
+#     summarise(
+#       missing_ages = all(!80:104 %in% Age)
+#     ) |>
+#     filter(missing_ages) |>
+#     ungroup()
+# 
+# cohort_val <- cohort_val |>
+#     rowwise() |>
+#     filter(!(country %in% rows_with_missing_ages$country &
+#              Cohort %in% rows_with_missing_ages$Cohort &
+#              Sex %in% rows_with_missing_ages$Sex)) |>
+#     ungroup()
+
+cohort_val <- cohort_val |>
+  rename(Deaths = Cohort_Deaths)
 ```
 
 ## Save data files
+
+The final validation data saved below includes the highest quality data composed from the HMD and IDL. After filtering out lower quality data (for example, years of data with some deaths at an "unknown" age), the remaining data includes death and exposure information across all ages for the following years and countries:
+
+Period IDL Data (what we'd expect given data availability)
+
+| Country | Starting Year | Ending Year |
+|---------|---------------|-------------|
+| France  | 1978          | 2022        |
+| Denmark | 1970          | 2014        |
+| Norway  | 1986          | 2006        |
+| Sweden  | 1986          | 2003        |
+
+```{r}
+cat("France \n")
+filtered_data <- period_val |> filter(country == "fra") |>
+  filter(Age <= 104) # ensure not all of the data for each 
+                      # year is coming from IDl 
+print(unique(filtered_data$Year))
+
+cat("Denmark \n")
+filtered_data <- period_val |> filter(country == "dnk") |>
+  filter(Age <= 104)
+print(unique(filtered_data$Year))
+
+cat("Norway \n")
+filtered_data <- period_val |> filter(country == "nor") |>
+  filter(Age <= 104)
+print(unique(filtered_data$Year))
+
+cat("Sweden \n")
+filtered_data <- period_val |> filter(country == "swe") |>
+  filter(Age <= 104)
+print(unique(filtered_data$Year))
+```
+
+Our Period Validation Data
+
+| Country | Starting Year | Ending Year |
+|---------|---------------|-------------|
+| France  | 1978          | 2021        |
+| Denmark | 1970          | 2014        |
+| Norway  | NA            | NA          |
+| Sweden  | 1986          | 2003        |
+
+```{r}
+cat("France \n")
+filtered_data <- cohort_val |> filter(country == "fra") |>
+  filter(Age <= 104) # ensure not all of the data for each 
+                      # year is coming from IDl 
+print(unique(filtered_data$Cohort))
+
+cat("Denmark \n")
+filtered_data <- cohort_val |> filter(country == "dnk") |>
+  filter(Age <= 104)
+print(unique(filtered_data$Cohort))
+
+cat("Norway \n")
+filtered_data <- cohort_val |> filter(country == "nor") |>
+  filter(Age <= 104)
+print(unique(filtered_data$Cohort))
+
+cat("Sweden \n")
+filtered_data <- cohort_val |> filter(country == "swe") |>
+  filter(Age <= 104)
+print(unique(filtered_data$Cohort))
+```
+
+Our Cohort Validation Data
+
+| Country | Starting Cohort | Ending Cohort |
+|---------|-----------------|---------------|
+| France  | 1870            | 1917          |
+| Denmark | 1863            | 1909          |
+| Norway  | NA              | NA            |
+| Sweden  | 1874            | 1892          |
+
+Norway ends up disappearing in both the period and cohort datasets. It doesn't have enough high quality data from HMD that matches with the years available from IDL. So, we don't include Norway data in our validation dataset for now.
+
+Save data files to data directory
 
 ```{r}
 write_csv(period_val, paste(path, "period_validation_data.csv", sep="/"))
