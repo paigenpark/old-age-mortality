@@ -145,13 +145,17 @@ ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, group = Type)) +
                      labels = custom_labels)
 ```
 
-## Plot with unsmoothed rates 
+## Plot with unsmoothed rates
 
 ```{r}
-filtered_unsmoothed <- period_data |>
-  filter(country == "fra", Year %in% years_to_plot, Sex == "f") |>
-  mutate(unsmoothed_mx = Deaths / Exposure) |>
-  mutate_all(~replace(., is.nan(.), 0)) 
+period_data_with_mx <- period_data |>
+  mutate(unsmoothed_mx = Deaths / Exposure) 
+```
+
+```{r}
+filtered_unsmoothed <- period_data_with_mx |>
+  filter(country == "fra", Year %in% years_to_plot, Sex == "f") #|>
+  #mutate_all(~replace(., is.nan(.), 0)) 
 
 new_row <- data.frame(Year = 1980, Age = 110, Sex = "f", Deaths = 0, Exposure = 0, 
                       country = "fra", unsmoothed_mx = 0)
@@ -190,4 +194,23 @@ ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, group = Type)) +
   scale_color_manual(values = c("my_kannisto_mx" = "blue",
                                 "beard_mx" = "black", "unsmoothed_mx" = "grey"),
                      labels = custom_labels)
+```
+
+### Comparing model performance metrics
+
+```{r}
+beard_fit <- beard_fit |>
+  mutate(model = "Beard")
+
+kannisto_fit <- kannisto_fit |>
+  mutate(model = "Kannisto")
+
+combined_results <- bind_rows(beard_fit, kannisto_fit)
+```
+
+```{r}
+ggplot(combined_results, aes(x = model, y = AIC, fill = Sex)) +
+  geom_boxplot() +
+  facet_wrap(~ Sex) +
+  theme_minimal()
 ```

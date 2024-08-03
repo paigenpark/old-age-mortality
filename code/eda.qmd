@@ -134,7 +134,6 @@ ggplot(cohort_data_with_mx, aes(x = Age, y = rate)) +
 
 ```{r}
 head(period_data)
-
 ```
 
 ## Summarize Cohort Data

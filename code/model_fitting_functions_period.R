@@ -143,20 +143,52 @@ fit_kannisto <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
   return(fitted_mx)
 }
 
+fit_kannisto_experiment <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
+  initial_params <- get_initial_params(log_lik_fn = log_lik_fn, data = data, fn = fn)
+  optim_result <- optim(par = initial_params, 
+                        fn = function(params) log_lik_fn(params, data, fn),
+                        gr = function(params) grad_fn(params, data, fn), 
+                        method = "L-BFGS-B", 
+                        lower = c(.Machine$double.eps, .Machine$double.eps), 
+                        upper = c(5, 5))
+  opt_params <- optim_result$par
+  fitted_mx <- kannisto_get_mx(optim_result$par[1], optim_result$par[2])
+  
+  log_lik_opt <- log_lik_fn(opt_params, data, fn)
+  num_params <- length(opt_params)
+  
+  n <- nrow(data)
+  aic <- 2 * num_params - 2 * log_lik_opt
+  bic <- log(n) * num_params - 2 * log_lik_opt
+  results <- list(fitted_mx = fitted_mx, AIC = aic, BIC = bic)
+  
+  return(results)
+}
+
+
 apply_kannisto_model <- function(data) {
-  fit_kannisto(
+  result <- fit_kannisto_experiment(
     init_param_fn = get_initial_params, 
     log_lik_fn = log_lik_fn, 
     grad_fn = kannisto_get_grad, 
     fn = kannisto_fn, 
     data = data
   )
+  
+  return(result)
 }
 
 fit_all_kannisto <- function(data) {
   data |>
     group_by(Year, country, Sex) |>
-    do(fitted_rates = apply_kannisto_model(.)) |>
+    do({
+      model_result <- apply_kannisto_model(.)
+      tibble(
+        fitted_rates = list(model_result$fitted_mx),
+        AIC = model_result$AIC,
+        BIC = model_result$BIC
+      )
+    }) |>
     ungroup()
 }
 
@@ -257,20 +289,59 @@ fit_beard <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
   return(fitted_mx)
 }
 
+fit_beard_experiment <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
+  initial_params <- beard_get_init_params(log_lik_fn = log_lik_fn, data = data, fn = fn)
+  optim_result <- optim(par = initial_params, 
+                        fn = function(params) log_lik_fn(params, data, fn),
+                        gr = function(params) grad_fn(params, data, fn), 
+                        method = "L-BFGS-B", 
+                        lower = c(.Machine$double.eps, .Machine$double.eps), 
+                        upper = c(5, 5))
+  opt_params <- optim_result$par
+  fitted_mx <- beard_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3])
+  
+  log_lik_opt <- log_lik_fn(opt_params, data, fn)
+  num_params <- length(opt_params)
+  
+  n <- nrow(data)
+  aic <- 2 * num_params - 2 * log_lik_opt
+  bic <- log(n) * num_params - 2 * log_lik_opt
+  results <- list(fitted_mx = fitted_mx, AIC = aic, BIC = bic)
+  
+  return(results)
+}
+
 apply_beard_model <- function(data) {
-  fit_beard(
+  #fit_beard(
+  result <- fit_beard_experiment(
     init_param_fn = beard_get_init_params, 
     log_lik_fn = log_lik_fn, 
     grad_fn = beard_get_grad, 
     fn = beard_fn, 
     data = data
   )
+  
+  return(result)
 }
+
+# fit_all_beard <- function(data) {
+#   data |>
+#     group_by(Year, country, Sex) |>
+#     do(fitted_rates = apply_beard_model(.)) |>
+#     ungroup()
+# }
 
 fit_all_beard <- function(data) {
   data |>
     group_by(Year, country, Sex) |>
-    do(fitted_rates = apply_beard_model(.)) |>
+    do({
+      model_result <- apply_beard_model(.)
+      tibble(
+        fitted_rates = list(model_result$fitted_mx),
+        AIC = model_result$AIC,
+        BIC = model_result$BIC
+      )
+    }) |>
     ungroup()
 }
 
