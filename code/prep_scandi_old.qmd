@@ -13,43 +13,26 @@ Load and clean Swedish data
 
 ```{r}
 path <- here("data", "SWEdeath_full_count.csv") 
-swe <- read.csv(path, header = TRUE, sep = ",")
-
-path <- here("data", "DNKdeath.txt") 
-dnk <- read.table(path, sep=',', header = TRUE)
-
-path <- here("data", "FINdeath.txt") 
-fin <- read.table(path, sep=',', header = TRUE)
+swe_full_count <- read.csv(path, header = TRUE, sep = ",")
 ```
 
 ```{r}
-head(swe)
-head(dnk)
-head(fin)
-countries <- c("swe", "dnk", "fin")
-```
+years_to_remove <- swe_full_count |>
+  filter(AgeInterval != "1" & AgeInterval != "+" & AgeInterval != ".") |>
+  filter(Lexis != "TL" & Lexis != "TU") |>
+  filter(Age != "80") |>
+  pull(unique(Year))
 
-```{r}
-cleaned_deaths_list <- list()
-for (country in countries) {
-  data <- get(country)
-  years_to_remove <- data |>
-    filter(AgeInterval != "1" & AgeInterval != "+" & AgeInterval != ".") |>
-    filter(Lexis != "TL" & Lexis != "TU") |>
-    filter(Age != "80") |>
-    pull(unique(Year))
-
-  cleaned_deaths_list[[country]] <- data |>
-    filter(!(Year %in% years_to_remove)) |>
-    filter(Age != "TOT")
-}
+cleaned_data <- swe_full_count |>
+  filter(!(Year %in% years_to_remove)) |>
+  #filter(Lexis != "VV", Lexis != "RR") |>
+  filter(Age != "TOT")
 ```
 
 Distribute unknown
 
 ```{r}
-cleaned_deaths_list_distributed_deaths <- lapply(cleaned_deaths_list, function(data) {
-  data <- data |>
+data <- cleaned_data |>
     group_by(Year) |>
     mutate(
       Deaths_with_unk = case_when(
@@ -66,20 +49,16 @@ cleaned_deaths_list_distributed_deaths <- lapply(cleaned_deaths_list, function(d
       )
     ) |>
     ungroup()
-  })
 
-cleaned_deaths_list <- lapply(cleaned_deaths_list_distributed_deaths, function(data) {
-  data <- data |>
+data <- data |>
     filter(Age != "UNK") |>
     rename(Deaths_without_unk = Deaths, Deaths = Deaths_with_unk)
-})
 ```
 
 Calculate cohort deaths
 
 ```{r}
-dfs_with_cohort <- lapply(cleaned_deaths_list, function(data) {
-  data |>
+cohort_data <- data |>
     arrange(Age, Sex, Year, Lexis) |>
     group_by(Age, Sex) |>
     mutate(TL_Deaths = if_else(Lexis == "TL", Deaths, NA_real_)) |>
@@ -87,46 +66,100 @@ dfs_with_cohort <- lapply(cleaned_deaths_list, function(data) {
                                            (lead(Year, 2) == Year + 1), 
                                          lead(Deaths, 2), NA_real_)) |>
     mutate(TU_Deaths_Next_Year = lead(TU_Deaths_Next_Year)) |>
-    mutate(Cohort_Deaths = TL_Deaths + TU_Deaths_Next_Year) |>
+    mutate(VH_Deaths = if_else(Lexis == "VH", Deaths, NA_real_)) |>
+    mutate(Cohort_Deaths = if_else(is.na(VH_Deaths), 
+                                   TL_Deaths + TU_Deaths_Next_Year, VH_Deaths)) |>
     ungroup()  
-})
 ```
 
 Cleaning and creating cohort variable
 
 ```{r}
-dfs_with_cohort <- lapply(dfs_with_cohort, function(data) {
-  data |>
-    filter(Lexis == "TL") |>
-    select(Year, Age, Sex, Cohort_Deaths, TL_Deaths, TU_Deaths_Next_Year) |>
-    mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex)) |>
-    mutate(Cohort = (Year - Age)) 
-})
+swe <- cohort_data |>
+  filter(Lexis == "TL" | Lexis == "VH") |>
+  select(Year, Age, Sex, Cohort_Deaths, TL_Deaths, TU_Deaths_Next_Year) |>
+  mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex)) |>
+  mutate(Cohort = (Year - Age)) |>
+  mutate(Country = "swe")
 ```
 
-Merge into single dataframe
+Prepare Lexis files from other Scandi countries
 
 ```{r}
-merge_data_list <- function(data_list) {
-  
-  # add a column to each dataframe to identify the country
-  data_list <- lapply(names(data_list), function(country) {
-    df <- data_list[[country]]
-    df$Country <- country
-    return(df)
-  })
-  
-  merged_data <- do.call(bind_rows, data_list)
-}
+path <- here("data", "dnk_deaths_lexis.txt") 
+dnk <- read.table(path, sep='', header = TRUE,
+                             stringsAsFactors = FALSE, skip = 2)
 
-merged <- merge_data_list(dfs_with_cohort)
+path <- here("data", "nor_deaths_lexis.txt") 
+nor <- read.table(path, sep='', header = TRUE,
+                             stringsAsFactors = FALSE, skip = 2)
+
+path <- here("data", "fin_deaths_lexis.txt") 
+fin <- read.table(path, sep='', header = TRUE,
+                             stringsAsFactors = FALSE, skip = 2)
+```
+
+```{r}
+dnk <- dnk |>
+  mutate(Country = "dnk")
+nor <- nor |>
+  mutate(Country = "nor")
+fin <- fin |>
+  mutate(Country = "fin")
+```
+
+```{r, warning=FALSE}
+non_swe <- bind_rows(fin, nor, dnk)
+
+non_swe <- non_swe |>
+  pivot_longer(cols = c('Female', 'Male', 'Total'),
+                               names_to = "Sex", values_to = "Deaths") |>
+  mutate(Sex = ifelse(Sex == "Female", "f", 
+                      ifelse(Sex == "Male", "m", 
+                              ifelse(Sex == "Total", "b", Sex)))) |>
+  filter(Sex != "b") |>
+  mutate(Year = as.integer(Year), Age = as.integer(Age), Sex = as.character(Sex),
+            Cohort = as.integer(Cohort)) |>
+  mutate(Lexis = if_else(Year - Age == Cohort, "TL", "TU")) |>
+  mutate(Age = ifelse(Age == "110+", "110", Age)) |>
+  filter(!Cohort == ".") 
+
+non_swe <- non_swe |>
+  arrange(Country, Age, Sex, Year, Lexis) |>
+  group_by(Age, Sex, Country) |>
+  mutate(TL_Deaths = if_else(Lexis == "TL", Deaths, NA_real_)) |>
+  mutate(TU_Deaths_Next_Year = if_else(Lexis == "TU" & 
+                                         (lead(Year, 2) == Year + 1), 
+                                       lead(Deaths, 2), NA_real_)) |>
+  mutate(TU_Deaths_Next_Year = lead(TU_Deaths_Next_Year)) |>
+  mutate(Cohort_Deaths = TL_Deaths + TU_Deaths_Next_Year) |>
+  ungroup() |>
+  filter(Lexis == "TL") |>
+  select(-Lexis, -Deaths)
+```
+
+```{r}
+scandi <- bind_rows(non_swe, swe)
+```
+
+Add exact ages for 110+ from IDL
+
+```{r}
+path <- here("data") 
+
+dnk_idl <- read.table(paste(path, "idl_dnk_death_105.txt", sep='/'), sep=';', 
+                          header = TRUE)
+nor_idl <- read.table(paste(path, "idl_nor_death_105.txt", sep='/'), sep=';', 
+                         header = TRUE)
+swe_idl <- read.table(paste(path, "idl_swe_death_105.txt", sep='/'), sep=';', 
+                         header = TRUE)
 ```
 
 Extinct cohort method
 
 ```{r}
 # get population counts by summing all future deaths for the cohort 
-extinct_cohorts <- merged |>
+extinct_cohorts <- scandi |>
   filter(Age >= 79) |>
   filter(!is.na(Cohort_Deaths)) |>
   group_by(Cohort, Sex, Country) |>
@@ -183,6 +216,8 @@ final <- extinct_cohorts_scandi |>
   # from 1815 cohort)
   filter(Cohort <= 1906, Cohort >= 1815) 
 ```
+
+Remove years without complete deaths
 
 Save
 

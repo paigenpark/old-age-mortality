@@ -5,7 +5,7 @@ library(tidyverse)
 
 # source file containing functions
 path <- here("code")
-source(paste(path, "model_fitting_functions_rates.R", sep='/'))
+source(paste(path, "model_fitting_functions_cohort.R", sep='/'))
 
 # read in test data
 data_path <- here("data") 
@@ -28,7 +28,8 @@ aus_deaths <- aus_deaths |>
   filter(LDB == 1) |>
   select(Year, Age, Sex, Deaths) |>
   filter(Age != "TOT" & Age != "UNK") |>
-  mutate(Age = as.integer(Age))
+  mutate(Age = as.integer(Age)) |>
+  mutate(Country = "aus")
 
 combined_df <- aus_expo_long |>
   left_join(aus_deaths, by = c("Year", "Age", "Sex")) |>
@@ -76,7 +77,9 @@ test_that("kannisto_get_grad works correctly", {
 test_that("kannisto_get_mx works correctly", {
   a <- 0.1
   b <- 0.2
-  result <- kannisto_get_mx(a, b)
+  low_age <- 80
+  high_age <- 110
+  result <- kannisto_get_mx(a, b, low_age, high_age)
   
   expect_true(is.matrix(result))
   expect_equal(ncol(result), 2)

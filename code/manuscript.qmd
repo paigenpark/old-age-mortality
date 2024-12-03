@@ -1,0 +1,657 @@
+---
+title: "Old-Age Mortality Smoothing: An Age-Old Dilemma Requiring Modern Statistical Problem Solving"
+format: 
+  pdf: 
+    cite-method: biblatex
+editor: visual
+execute: 
+  echo: false
+---
+
+## 1 Introduction
+
+### How do mortality rates evolve for the oldest segments of populations?
+
+Mortality at extremely old ages is difficult to model. Small numbers of people make it beyond age 100 and data for those who do can often be inaccurate due to age misreporting. For much of demography’s history, limited data at the oldest ages prevented modelers from including older ages in models. For example, Benjamin Gompertz included an upper bound on the ages that his exponential model of adult mortality would reasonably cover (Gompertz 1825). Beginning with Vaupel et al. (1979) and their discussion of frailty and demographic selection, formulations of old age mortality models began taking shape. Heterogeneity in individuals' susceptibility to mortality leads to a slowing of previously exponentially increasing mortality rates at the oldest ages, not because of a change in the rates themselves, but because of a change in composition as frailer individuals die off. With improved data from the 1990s up to today, these largely theoretical assertions of slowing mortality were also observed empirically. A landmark study published in *Science* in 2018 used very high-quality, extensively validated Italian data to argue that mortality rates do decelerate with age after age 80 and at the very highest ages a plateau of mortality rates is reached (Barbi et al. 2018).
+
+However, other research using data of similar quality have called these results into question. Research on US mortality shows that there has been a Gompertization of mortality trajectories for older cohorts, which could imply that improved data collection methods, for example the transition in the US to collecting birth registration data, has resulted in mortality patterns that look more Gompertzian and display less mortality deceleration (Gavrilov and Gavrilova 2019). Dang et al. (2023) also find that Gompertz outperforms assumptions of a constant mortality hazard using high quality French data for cohorts 1883-1901.
+
+### Which model(s) can capture ground truth of old-age mortality?
+
+Given these different theoretical and empirical perspectives on the true pattern of old-age mortality, and the general challenge of having very limited data, it is an extremely difficult task to find models that can represent the ground truth. Approaches up to this point have primarily focused on few-parameter statistical models including of course, the Gompertz exponential model, as well as models like Kannisto, log-quadratic, and Beard, which can capture rate deceleration.
+
+The Human Mortality Database (HMD), the gold standard for mortality data in developed countries, prepares raw data on births, deaths, and person-years-lived for inclusion in life tables. A crucial step in this process is smoothing mortality rates above age 80 so that unreliable rates at the very highest ages do not unnecessarily perturb the life tables. Smoothing allows for a better representation of the underlying mortality conditions. The HMD fits data for deaths and exposures above 80 to the Kannisto model of old-age mortality, a logistic model with an asymptote of one (Thatcher et al. 1998, Wilmoth et al. 2021). However, there is growing evidence that regardless of whether logistic models or exponential models are better suited to fitting to old-age mortality, that the Kannisto model might be an especially poor choice – the Beard model or the log-quadratic model have been shown to perform better (Dang et al. 2024, Feehan 2018). This emerging literature suggests that reevaluation of the Kannisto smoothing method for use in creating HMD life tables is sorely needed.
+
+Despite being widely studied and debated as the only realistic options for fitting old-age mortality, all of these simple models have significant drawbacks, not only the Kannisto model. Some have questioned whether a simple few-parameter statistical model is flexible enough to capture complexities arising from heterogeneity and differences between populations (Wrigley-Field 2014). These models can also be brittle and not perform well on some populations, particularly populations with small numbers of people. They also require individual fits to each year-population-gender combination of data, which severely limits how much data each model can use as information and can lead to unrealistic jumps in rates from year to year. However, these models have important advantages. One is that their rigidity prevents over-fitting (though perhaps by under-fitting). Another is that these models have garnered a lot of trust over time through both empirical and theoretical evidence supporting their use.
+
+Other alternatives for smoothing abound. Options that allow for smoothing not only year-by-year or cohort-by-cohort individually, but also across periods and cohorts (across the Lexis surface), would likely produce more stable rates that do not vary unrealistically one year to the next. There are several modeling approaches that could incorporate smoothing of this sort through pooled parameters including Bayesian hierarchical models and various machine learning approaches. Additionally, models that are more flexible may avoid some of the under-fitting problems current models face. P-splines, kernel-based models, and other semi- or non- parametric models may improve fits over models with strict functional forms.
+
+How to chose optimal models for particular data problems is of course not a new dilemma, though the answer to this question is far from settled and may be unique to each problem. Should we chose models that maximize fit to in-sample or out-of-sample data? Should the simplicity or transparency of the model factor in? Should we select models that are theoretically sound, in this case models that have been developed with old-age mortality in mind, even if they fit the data less well? How should we assess fit? Is the crude penalty for model complexity in information criterion like AIC enough to adequately account for overfitting? Are cross-validation metrics like accuracy better? This paper will present one approach to selecting an optimal model for a particular problem, given practical constraints.
+
+The HMD adheres to certain principles that will play also play an important role in model selection, alongside model fit. The HMD aims to:
+
+1.  Make as little changes to the official demographic data as possible
+
+2.  Find a model that is optimal in the sense that it is not necessarily the best for a given country or period, but is the best one on average (for all countries, all years). Life tables should be comparable.[^1]
+
+[^1]: These principles summarized from email correspondence with HMD director, Magali Barbieri
+
+This paper will weigh the goals of the HMD with the performance of many different modeling approaches to 1) demonstrate how practical constraints play a role in fitting models to data, 2) consider trade-offs of many possible modeling choices in the context of this problem, and 3) ultimately recommend a smoothing approach for the HMD that balances accuracy, simplicity, comparability, and rigor.
+
+### Should sources of data like the HMD smooth observed rates at all?
+
+The HMD methods protocol states: "Observed period death rates are only one result of a random process for which other outcomes are possible as well. At older ages where this inherent randomness is most noticeable, it is well justified to smooth the observed values in order to obtain an improved representation of the underlying mortality conditions." EXPAND SECTION WITH ADDITIONAL LIT
+
+### Paper outline
+
+The remainder of the paper will proceed as follows. Section 2 will discuss the data used and methods employed in this project. Sections 3-5 will present results for three different sets of models. The first set of models, compared in Section 3, are the classic parametric models that have been thoroughly studied in the context of old-age mortality. Section 4 will compare two approaches that retain the per-year and per-country approach to fitting models but are more flexible and allow for aberrations in how old-age mortality rates actually evolve over time. Section 5 will compare methods that allow for simultaneous modeling across country and year, and thus smooth rates across the Lexis surface. Section 6 concludes by considering all modeling approaches together and discussing recommendations for the HMD—and other entities that construct life tables—in terms of both model fit and alignment with HMD principles.
+
+## 2 Methods
+
+### Data
+
+To assess how well different models capture the underlying mortality pattern at old ages, we fit a variety of promising models to the highest quality data in the HMD and use model selection tools to evaluate which models perform best. Extinct cohort death data (1873-1906) is used for several countries, with the assumption that cohorts become extinct once they reach age 115. Estimates for the population at risk of dying were calculated using the extinct cohort method (Thatcher et al. 2002). The data we selected for use in this report met the highest standards of quality including being available by Lexis triangle (not requiring manual distribution to each triangle), being available up to the highest possible age, and coming from countries with strong reputations for accurate vital statistics collection. While quality is important, it is not the only factor that matters when considering old age mortality. Having large enough populations to draw conclusions about rates at the oldest ages is also important. Unfortunately, many of the countries with high quality data in the HMD also tend to have small populations. For this reason, we’ve categorized our data into two levels: 1) high quality, high population and 2) high quality, low population. Future iterations of this research might also include a third category of lower quality, high population data to expand the pool of countries models are tested on. This third group of countries would be used as a sanity check to ensure consistent results with the higher quality data, rather than as a method of selecting the models themselves.
+
+Level one data includes deaths for French cohorts from 1873-1906 and comes from the French National Statistics Office, INSEE (*Division des études et enquêtes démographiques, Institut national de la statistique et des études économiques*), which also supplies the input data for French HMD life tables. The only difference between the data used in this report and the French input death data available on the HMD website is that past 2005, the data used in this report is not aggregated at 105+, but extends by single year of age to the oldest possible age. Both the quality and size of the French data is high and thus indicate that we should rely most heavily on these data to draw conclusions about model fit.
+
+Level two data include death data for Danish, Swedish, and Finnish cohorts, all of which are directly taken from the death input data publicly available on the HMD website, at mortality.org. These data meet the highest standards of data quality, but each have very small populations, making it difficult to draw conclusions about old age mortality. To account for this, we pooled “Scandinavian” death rates in our model selection process. 
+
+### Approach
+
+We fit five of the most promising mortality models, namely Gompertz, Makeham, Log-Quadratic, Beard, and Kannisto, to data for each available cohort. Here, we’ve used the AIC as our primary metric of comparison, but other model comparison tools will be employed in the future to validate the AIC results. Since AIC is a purely relative metric—absolute AIC has no meaning—we focus our analysis on a metric called $\Delta AIC$.
+
+## 3 Classic Model Results
+
+```{r, include=FALSE}
+library(here)
+library(tidyverse)
+library(testthat)
+path <- here("code")
+```
+
+```{r}
+# source and test functions
+source(paste(path, "model_fitting_functions_cohort.R", sep='/'))
+#test_file(paste(path, "unit_testing_rates.R", sep='/'))
+```
+
+```{r, include=FALSE}
+# load in prepared data
+data_path <- here("data")
+scandi <- read_csv(paste(data_path, "scandi_extinct_cohorts.csv", sep='/'))
+fra_data <- read_csv(paste(data_path, "french_data.csv", sep='/'))
+```
+
+```{r}
+fra_data <- fra_data |>
+  mutate(Country = "fra")
+
+data <- bind_rows(scandi, fra_data)
+```
+
+```{r}
+# get rid of any NAs before fitting 
+data <- data |>
+  filter(!is.na(Deaths)) |>
+  mutate(Exposure = if_else(is.na(Exposure), 0, Exposure)) 
+```
+
+```{r}
+cohort_data_with_mx <- data |>
+  mutate(raw_mx = Deaths / Exposure)
+```
+
+```{r}
+# fit kannisto model
+kannisto_fit <- fit_all_kannisto(cohort_data_with_mx)
+```
+
+```{r}
+kannisto_fit <- kannisto_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
+
+```{r}
+cohorts_to_plot = c(1875, 1880, 1890, 1900)
+
+kannisto_filtered <- kannisto_fit |>
+  filter(Cohort %in% cohorts_to_plot, Sex == "f", Country == "fra") |>
+  unnest(fitted_rates) |>
+  rename(my_kannisto_mx = fitted_rates_Mx)
+```
+
+```{r, eval=FALSE}
+ggplot(kannisto_filtered, aes(x = fitted_rates_x, y = my_kannisto_mx)) +
+  geom_line() +
+  labs(# title = "Comparison of HMD and My Fit",
+       x = "Age",
+       y = "Rates") +
+  theme_minimal() +
+  facet_wrap(~ Cohort, scales = "free_y") 
+```
+
+```{r}
+# fit beard model
+beard_fit <- fit_all_beard(cohort_data_with_mx)
+```
+
+```{r}
+beard_fit <- beard_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
+
+```{r}
+beard_filtered <- beard_fit |>
+  filter(Cohort %in% cohorts_to_plot, Sex == "f") |>
+  unnest(fitted_rates) |>
+  rename(beard_mx = fitted_rates_Mx)
+```
+
+```{r}
+joint_filtered <- cbind(kannisto_filtered, beard_filtered)
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(my_kannisto_mx, beard_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r, eval=FALSE}
+custom_labels <- c("my_kannisto_mx" = "My Kannisto Rates", "beard_mx" = "Beard")
+
+ggplot(joint_filtered, aes(x = fitted_rates_x, y = Rate, color = Type, group = Type)) +
+  geom_line(linewidth = 1) +
+  labs(# title = "Comparison of HMD and My Fit",
+       x = "Age",
+       y = "Rate",
+       color = "Legend") +
+  theme_minimal() +
+  facet_wrap(~ Cohort, scales = "free_y") +
+  scale_color_manual(values = c("my_kannisto_mx" = "red", "beard_mx" = "blue"),
+                     labels = custom_labels)
+```
+
+```{r}
+# fit gompertz model
+gompertz_fit <- fit_all_gompertz(cohort_data_with_mx)
+```
+
+```{r}
+gompertz_fit <- gompertz_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
+
+```{r}
+makeham_fit <- fit_all_makeham(cohort_data_with_mx)
+makeham_fit <- makeham_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
+
+```{r}
+lq_fit <- fit_all_lq(cohort_data_with_mx)
+lq_fit <- lq_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
+```
+
+### Sample of Cohort Model Fits for France and Sweden
+
+#### France Fits
+
+```{r}
+cohorts_to_plot = c(1885)
+country = "fra"
+sex = "f"
+fitted_models <- list(kannisto = kannisto_fit, beard = beard_fit, 
+                      gompertz = gompertz_fit, makeham = makeham_fit,
+                      lq = lq_fit)
+filtered_data <- list()
+
+for (i in seq_along(fitted_models)) {
+  model_name <- names(fitted_models)[i]
+  model <- fitted_models[[i]]
+  model_filtered <- model |>
+    filter(Country == country, Cohort %in% cohorts_to_plot, Sex == sex) |>
+    unnest(fitted_rates) #|>
+    #rename(!!paste(model_name, "mx", sep = "_") := fitted_rates_Mx)
+  
+  filtered_data[[model_name]] <- model_filtered
+}
+
+filtered_smoothed <- do.call(cbind, filtered_data)
+
+filtered_smoothed <- filtered_smoothed |>
+  rename(Cohort = kannisto.Cohort, Age = kannisto.fitted_rates_x)
+```
+
+```{r}
+filtered_raw <- cohort_data_with_mx |>
+  filter(Cohort %in% cohorts_to_plot, Sex == sex, Country == country) |>
+  arrange(Cohort, Age) 
+```
+
+```{r}
+joint_filtered <- full_join(filtered_smoothed, filtered_raw, by = c("Cohort", "Age"))
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(kannisto.fitted_rates_Mx, 
+                                                        beard.fitted_rates_Mx, 
+                                                        gompertz.fitted_rates_Mx,
+                                                        makeham.fitted_rates_Mx,
+                                                        lq.fitted_rates_Mx,
+                                                        raw_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r, fig.cap="France Mortality Rates Plotted with Model Fits. ", warning=FALSE}
+custom_labels <- c("kannisto.fitted_rates_Mx" = "Kannisto", 
+                   "beard.fitted_rates_Mx" = "Beard", 
+                   "gompertz.fitted_rates_Mx" = "Gompertz", 
+                   "makeham.fitted_rates_Mx" = "Makeham",
+                   "lq.fitted_rates_Mx" = "Log-Quadratic",
+                   "raw_mx" = "Raw rates")
+
+pdf("france_fits.pdf", width = 9, height = 6)
+
+ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, linetype = Type, group = Type)) +
+  geom_line(data = subset(joint_filtered, Type != "raw_mx"), size = 1.5) +
+  geom_point(data = subset(joint_filtered, Type == "raw_mx"), size = 1.5) +
+  labs(#title = "France",
+       x = "Age",
+       y = "Rates",
+       color = "Legend",
+       linetype = "Legend") +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.text = element_text(size = 12),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  ) +
+  facet_wrap(~ Cohort, scales = "free_y") +
+  scale_color_manual(values = c("kannisto.fitted_rates_Mx" = "blue",
+                                "beard.fitted_rates_Mx" = "green", 
+                                "makeham.fitted_rates_Mx" = "black",
+                                "gompertz.fitted_rates_Mx" = "red",
+                                "lq.fitted_rates_Mx" = "pink",
+                                "raw_mx" = "grey"),
+                     labels = custom_labels) +
+  scale_linetype_manual(values = c("kannisto.fitted_rates_Mx" = "solid",
+                                   "beard.fitted_rates_Mx" = "solid", 
+                                   "gompertz.fitted_rates_Mx" = "solid",
+                                   "makeham.fitted_rates_Mx" = "solid",
+                                   "lq.fitted_rates_Mx" = "solid",
+                                   "raw_mx" = "solid"),
+                        labels = custom_labels) +
+  xlim(80, 115)  # Setting x-axis limits
+
+ dev.off()
+ system("open france_fits.pdf")
+```
+
+Figure 1 shows data and models for a sample of extinct cohorts between 1873 and 1906. Grey points represent the mortality rates calculated from French vital statistics on deaths and exposures calculated through the extinct cohort method. Models include Beard, Gompertz, Kannisto, Log-Quadratic, and Makeham. All models follow the data and each other closely until ages in the late 90s are reached. From there models diverge quite drastically.
+
+#### Scandi Fits
+
+```{r}
+country = "scandi"
+sex = "f"
+fitted_models <- list(kannisto = kannisto_fit, beard = beard_fit, 
+                      gompertz = gompertz_fit, makeham = makeham_fit,
+                      lq = lq_fit)
+filtered_data <- list()
+
+for (i in seq_along(fitted_models)) {
+  model_name <- names(fitted_models)[i]
+  model <- fitted_models[[i]]
+  model_filtered <- model |>
+    filter(Country == country, Cohort %in% cohorts_to_plot, Sex == sex) |>
+    unnest(fitted_rates) #|>
+    #rename(!!paste(model_name, "mx", sep = "_") := fitted_rates_Mx)
+  
+  filtered_data[[model_name]] <- model_filtered
+}
+
+filtered_smoothed <- do.call(cbind, filtered_data)
+
+filtered_smoothed <- filtered_smoothed |>
+  rename(Cohort = kannisto.Cohort, Age = kannisto.fitted_rates_x)
+
+joint_filtered <- full_join(filtered_smoothed, filtered_raw, by = c("Cohort", "Age"))
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(kannisto.fitted_rates_Mx, 
+                                                        beard.fitted_rates_Mx, 
+                                                        gompertz.fitted_rates_Mx,
+                                                        makeham.fitted_rates_Mx,
+                                                        lq.fitted_rates_Mx,
+                                                        raw_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r}
+filtered_raw <- cohort_data_with_mx |>
+  filter(Cohort %in% cohorts_to_plot, Sex == sex, Country == country) |>
+  arrange(Cohort, Age) 
+```
+
+```{r}
+joint_filtered <- full_join(filtered_smoothed, filtered_raw, by = c("Cohort", "Age"))
+
+joint_filtered <- pivot_longer(joint_filtered, cols = c(kannisto.fitted_rates_Mx, 
+                                                        beard.fitted_rates_Mx, 
+                                                        gompertz.fitted_rates_Mx,
+                                                        makeham.fitted_rates_Mx,
+                                                        lq.fitted_rates_Mx,
+                                                        raw_mx), 
+                               names_to = "Type", values_to = "Rate")
+
+if (anyDuplicated(names(joint_filtered)) > 0) {
+  names(joint_filtered) <- make.unique(names(joint_filtered))
+}
+```
+
+```{r}
+pdf("scandi_fits.pdf", width = 9, height = 6)
+ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, linetype = Type, group = Type)) +
+  geom_line(data = subset(joint_filtered, Type != "raw_mx"), size = 1.5) +
+  geom_point(data = subset(joint_filtered, Type == "raw_mx"), size = 1.5) +
+  labs(
+       x = "Age",
+       y = "Rates",
+       color = "Legend",
+       linetype = "Legend") +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.text = element_text(size = 12),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  ) +
+  facet_wrap(~ Cohort, scales = "free_y") +
+  scale_color_manual(values = c("kannisto.fitted_rates_Mx" = "blue",
+                                "beard.fitted_rates_Mx" = "green", 
+                                "makeham.fitted_rates_Mx" = "black",
+                                "gompertz.fitted_rates_Mx" = "red",
+                                "lq.fitted_rates_Mx" = "pink",
+                                "raw_mx" = "grey"),
+                     labels = custom_labels) +
+  scale_linetype_manual(values = c("kannisto.fitted_rates_Mx" = "solid",
+                                   "beard.fitted_rates_Mx" = "solid", 
+                                   "gompertz.fitted_rates_Mx" = "solid",
+                                   "makeham.fitted_rates_Mx" = "solid",
+                                   "lq.fitted_rates_Mx" = "solid",
+                                   "raw_mx" = "solid"),
+                        labels = custom_labels)
+dev.off()
+system("open scandi_fits.pdf")
+
+```
+
+### Model Performance
+
+```{r}
+beard_fit <- beard_fit |>
+  mutate(model = "Beard")
+
+kannisto_fit <- kannisto_fit |>
+  mutate(model = "Kannisto")
+
+gompertz_fit <- gompertz_fit |>
+  mutate(model = "Gompertz")
+
+makeham_fit <- makeham_fit |>
+  mutate(model = "Makeham")
+
+lq_fit <- lq_fit |>
+  mutate(model = "L-Q")
+
+combined_results <- bind_rows(beard_fit, kannisto_fit, gompertz_fit, makeham_fit, lq_fit)
+```
+
+```{r}
+# ggplot(combined_results, aes(x = model, y = AIC, fill = Sex)) +
+#   geom_boxplot() +
+#   facet_wrap(~ Sex) +
+#   theme_minimal()
+```
+
+```{r}
+# ggplot(combined_results, aes(x = model, y = BIC, fill = Sex)) +
+#   geom_boxplot() +
+#   facet_wrap(~ Sex) +
+#   theme_minimal()
+```
+
+Create figure with change in AIC and see if distinctions are more obvious
+
+```{r}
+combined_results_changeAIC <- combined_results |>
+  group_by(Cohort, Sex, Country) |>
+  mutate(change_aic = AIC - min(AIC)) |>
+  mutate(change_aic = if_else(change_aic == 0, .Machine$double.eps, change_aic)) |>
+  mutate(log10_change_AIC = log10(change_aic)) |>
+  ungroup()
+```
+
+#### Sweden AIC Results
+
+```{r}
+# swe_1900 <- combined_results_changeAIC
+# knitr::kable(cohort_1900, format = 'pandoc', caption = 'Title of the table')
+```
+
+```{r, fig.cap="Logarithm of the difference in AIC between the best performing model for each cohort and the model in question for Swedish cohorts. Each model's boxplot represents the distribution of $\\Delta$AIC across all Swedish cohorts. Lower values of $log_{10}(\\Delta)$AIC imply a better fit.", warning=FALSE}
+
+swe_aic <- combined_results_changeAIC |>
+  filter(Country == "swe")
+
+# order by median 
+median_values <- swe_aic %>%
+  group_by(model) %>%
+  summarize(median_AIC = median(log10_change_AIC)) %>%
+  arrange(median_AIC)
+
+# Reorder the model factor based on the median values
+swe_aic <- swe_aic %>%
+  mutate(model = factor(model, levels = median_values$model))
+
+ggplot(swe_aic, aes(x = model, y = log10_change_AIC, fill = Sex)) +
+  geom_boxplot() +
+  facet_wrap(~ Sex) +
+  labs(
+    x = "Model",
+    y = "Log10 Change in AIC",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+dev.off()
+system("open swe_aic.pdf")
+```
+
+#### Denmark AIC Results
+
+```{r}
+dnk_aic <- combined_results_changeAIC |>
+  filter(Country == "dnk")
+
+# order by median 
+median_values <- dnk_aic %>%
+  group_by(model) %>%
+  summarize(median_AIC = median(log10_change_AIC)) %>%
+  arrange(median_AIC)
+
+# Reorder the model factor based on the median values
+dnk_aic <- dnk_aic %>%
+  mutate(model = factor(model, levels = median_values$model))
+
+ggplot(dnk_aic, aes(x = model, y = log10_change_AIC, fill = Sex)) +
+  geom_boxplot() +
+  facet_wrap(~ Sex) +
+  labs(
+    x = "Model",
+    y = "Log10 Change in AIC",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+```
+
+#### Finland AIC Results
+
+```{r}
+fin_aic <- combined_results_changeAIC |>
+  filter(Country == "fin")
+
+# order by median 
+median_values <- fin_aic %>%
+  group_by(model) %>%
+  summarize(median_AIC = median(log10_change_AIC)) %>%
+  arrange(median_AIC)
+
+# Reorder the model factor based on the median values
+fin_aic <- fin_aic %>%
+  mutate(model = factor(model, levels = median_values$model))
+
+ggplot(fin_aic, aes(x = model, y = log10_change_AIC, fill = Sex)) +
+  geom_boxplot() +
+  facet_wrap(~ Sex) +
+  labs(
+    x = "Model",
+    y = "Log10 Change in AIC",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+```
+
+#### Pooled Results for Scandinavia
+
+```{r}
+scandi_aic <- combined_results_changeAIC |> 
+  filter(Country == "scandi") 
+
+reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
+  new_x <- paste(x, within, sep = sep)
+  stats::reorder(new_x, by, FUN = fun)
+}
+
+scale_x_reordered <- function(..., sep = "___") {
+  reg <- paste0(sep, ".+$")
+  ggplot2::scale_x_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+
+pdf("scandi_aic.pdf", width = 9, height = 6)
+ggplot(scandi_aic, aes(x = reorder_within(model, log10_change_AIC, Sex, median), y = log10_change_AIC, fill = Sex)) +
+  geom_boxplot() +
+  scale_x_reordered() +
+  facet_wrap(~ Sex,  scales = "free_x") +
+  labs(
+    x = "Model",
+    y = "Log10 Change in AIC",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+dev.off()
+system("open scandi_aic.pdf")
+```
+
+#### France AIC Results
+
+```{r, fig.cap="Logarithm of the difference in AIC between the best performing model for each cohort and the model in question for French cohorts. Each model's boxplot represents the distribution of $\\Delta$AIC across all French cohorts. Lower values of $log_{10}(\\Delta)$AIC imply a better fit."}
+fra_aic <- combined_results_changeAIC |> 
+  filter(Country == "fra") 
+
+pdf("fra_aic.pdf", width = 9, height = 6)
+ggplot(fra_aic, aes(x = reorder_within(model, log10_change_AIC, Sex, median), y = log10_change_AIC, fill = Sex)) +
+  geom_boxplot() +
+  scale_x_reordered() +
+  facet_wrap(~ Sex,  scales = "free_x") +
+  labs(
+    x = "Model",
+    y = "Log10 Change in AIC",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+dev.off()
+system("open fra_aic.pdf")
+```
+
+## Plots for presentation
+
+```{r}
+gom <- gompertz_fit$fitted_rates
+
+  pdf("gompertz.pdf", width = 3, height = 6)
+
+plot(gom[[1]]$fitted_rates_x, gom[[1]]$fitted_rates_Mx, type = "l", 
+     col = "blue", lwd = 2, 
+     xlab = "Age", ylab = "Mx")
+
+  dev.off()
+  system("open gompertz.pdf")
+```
+
+```{r}
+kan <- kannisto_fit$fitted_rates
+
+  pdf("kannisto.pdf", width = 3, height = 6)
+
+plot(kan[[1]]$fitted_rates_x, kan[[1]]$fitted_rates_Mx, type = "l", 
+     col = "blue", lwd = 2, 
+     xlab = "Age", ylab = "")
+
+  dev.off()
+  system("open kannisto.pdf")
+```
+
+```{r}
+beard <- beard_fit$fitted_rates
+
+  pdf("beard.pdf", width = 3, height = 6)
+
+plot(beard[[1]]$fitted_rates_x, beard[[1]]$fitted_rates_Mx, type = "l", 
+     col = "blue", lwd = 2, 
+     xlab = "Age", ylab = "")
+
+  dev.off()
+  system("open beard.pdf")
+```
+
+```{r}
+lq <- lq_fit$fitted_rates
+
+  pdf("lq.pdf", width = 3, height = 6)
+
+plot(lq[[1]]$fitted_rates_x, lq[[1]]$fitted_rates_Mx, type = "l", 
+     col = "blue", lwd = 2, 
+     xlab = "Age", ylab = "")
+
+  dev.off()
+  system("open lq.pdf")
+```
+
+```{r}
+makeham <- makeham_fit$fitted_rates
+
+  pdf("makeham.pdf", width = 3, height = 6)
+
+plot(makeham[[1]]$fitted_rates_x, makeham[[1]]$fitted_rates_Mx, type = "l", 
+     col = "blue", lwd = 2, 
+     xlab = "Age", ylab = "")
+
+  dev.off()
+  system("open makeham.pdf")
+```

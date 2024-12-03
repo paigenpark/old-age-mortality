@@ -13,16 +13,16 @@ log_lik_fn <- function(params, data, fn) {
   # log lik assuming deaths are poisson distributed
   log_lik <- sum( (Dx*log(mux)) - (Ex*mux) )
   
-  return(-log_lik) #* 10^-6) # scale down according to HMD procedure 
+  return(log_lik) #* 20^-6) # scale down according to HMD procedure 
 }
 
-##########################
-# Global variables
-##########################
-
-low_age = 80
-fra_high_age = 122
-swe_high_age = 116
+# ##########################
+# # Global variables
+# ##########################
+# 
+# low_age = 80
+# fra_high_age = 115
+# scand_high_age = 108
 
 ##########################
 # Model specific functions 
@@ -30,8 +30,8 @@ swe_high_age = 116
 
 #### Kannisto ####
 get_initial_params <- function(log_lik_fn, data, fn,
-                               a_values=seq(0.01, .3, length.out = 10), 
-                               b_values=seq(0.01, .3, length.out = 10)) {
+                               a_values=seq(0.001, 1, length.out = 20), 
+                               b_values=seq(0.001, 1, length.out = 20)) {
   # Perform grid search
   grid_search_results <- expand.grid(a = a_values, b = b_values)
   
@@ -41,8 +41,8 @@ get_initial_params <- function(log_lik_fn, data, fn,
     return(log_lik_fn(params, data, fn))
   })
   
-  # Find the combination with the highest log-likelihood (least negative)
-  best_params <- grid_search_results[which.min(grid_search_results$log_lik), ]
+  # Find the combination with the highest log-likelihood 
+  best_params <- grid_search_results[which.max(grid_search_results$log_lik), ]
   
   # Extract the best initial values for a and b
   initial_params <- c(a = best_params$a, b = best_params$b)
@@ -55,7 +55,7 @@ kannisto_fn <- function(params, data) {
   b <- params[2]
   x <- data$Age
   
-  ( a*exp(b*( (x+0.5) - low_age) ) ) / ( 1 + a*exp(b*( (x+0.5) - low_age)) )
+  ( a*exp(b*( (x+0.5) - 80) ) ) / ( 1 + a*exp(b*( (x+0.5) - 80)) )
 }
 
 
@@ -67,7 +67,7 @@ kannisto_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   Dx <- data$Deaths
   Ex <- data$Exposure
   
-  Q = b * (x + 0.5 - low_age)
+  Q = b * (x + 0.5 - 80)
   P = exp(Q)
   N = a * P
   mux = N / (1 + N)
@@ -81,12 +81,12 @@ kannisto_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   dNda = P
   dNdP = a
   dPdQ = exp(Q)
-  dQdb = x + 0.5 - low_age
+  dQdb = x + 0.5 - 80
   
   grad_a = sum( (dLdG * dGdmux * dmuxdN * dNda) )
   grad_b = sum( (dLdG * dGdmux * dmuxdN * dNdP * dPdQ * dQdb) )
   
-  grad <- -c(grad_a, grad_b) #* 10^-6 
+  grad <- c(grad_a, grad_b) #* 10^-6 
   
   if (any(!is.finite(grad))) {
        print(params)
@@ -97,10 +97,10 @@ kannisto_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   return(grad)
 }
 
-kannisto_get_mx <- function(a,b, low_age, high_age) {
+kannisto_get_mx <- function(a,b) {
   
-  x <- low_age:high_age
-  Mx <- ( a*exp(b*( (x+0.5) - low_age) ) ) / ( 1 + a*exp(b*( (x+0.5) - low_age)) )
+  x <- 80:115
+  Mx <- ( a*exp(b*( (x+0.5) - 80) ) ) / ( 1 + a*exp(b*( (x+0.5) - 80)) )
   Mx <- cbind(x, Mx)
   
   return(Mx)
@@ -113,14 +113,9 @@ fit_kannisto <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
                         gr = function(params) grad_fn(params, data, fn), 
                         method = "L-BFGS-B", 
                         lower = c(.Machine$double.eps, .Machine$double.eps), 
-                        upper = c(5, 5))
-  high_age <- case_when(
-    data$Country == "fra" ~ fra_high_age,
-    data$Country == "swe" ~ swe_high_age
-  )
-  high_age <- high_age[1]
-  fitted_mx <- kannisto_get_mx(optim_result$par[1], optim_result$par[2], 
-                               low_age, high_age)
+                        upper = c(5, 5),
+                        control = list(fnscale=-1))
+  fitted_mx <- kannisto_get_mx(optim_result$par[1], optim_result$par[2])
   opt_params <- optim_result$par
   log_lik_opt <- log_lik_fn(opt_params, data, fn)
   num_params <- length(opt_params)
@@ -175,7 +170,7 @@ beard_get_init_params <- function(log_lik_fn, data, fn,
   })
   
   # Find the combination with the highest log-likelihood (least negative)
-  best_params <- grid_search_results[which.min(grid_search_results$log_lik), ]
+  best_params <- grid_search_results[which.max(grid_search_results$log_lik), ]
   
   # Extract the best initial values for a and b
   initial_params <- c(a = best_params$a, b = best_params$b, d = best_params$d)
@@ -189,7 +184,7 @@ beard_fn <- function(params, data) {
   d <- params[3]
   x <- data$Age
   
-  ( a*exp(b*( (x+0.5) - low_age) ) ) / ( 1 + d*exp(b*( (x+0.5) - low_age)) )
+  ( a*exp(b*( (x+0.5) - 80) ) ) / ( 1 + d*exp(b*( (x+0.5) - 80)) )
 }
 
 beard_get_grad <- function(params, data, fn, epsilon = 1e-8) {
@@ -201,7 +196,7 @@ beard_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   Dx <- data$Deaths
   Ex <- data$Exposure
   
-  Q = b * (x + 0.5 - low_age)
+  Q = b * (x + 0.5 - 80)
   P = exp(Q)
   N = a * P
   R = d * P
@@ -218,13 +213,13 @@ beard_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   dNda = P
   dNdP = a
   dPdQ = exp(Q)
-  dQdb = x + 0.5 - low_age
+  dQdb = x + 0.5 - 80
   
   grad_a = sum( (dLdG * dGdmux * dmuxdN * dNda) )
   grad_b = sum( (dLdG * dGdmux * dmuxdN * dNdP * dPdQ * dQdb) )
   grad_d = sum( (dLdG * dGdmux * dmuxdR * dRdd) )
   
-  grad <- -c(grad_a, grad_b, grad_d) #* 10^-6 
+  grad <- c(grad_a, grad_b, grad_d) #* 10^-6 
   
   if (any(!is.finite(grad))) {
     print(params)
@@ -235,10 +230,10 @@ beard_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   return(grad)
 }
 
-beard_get_mx <- function(a,b,d, low_age, high_age) {
+beard_get_mx <- function(a,b,d) {
   
-  x <- low_age:high_age
-  Mx <- ( a*exp(b*( (x+0.5) - low_age) ) ) / ( 1 + d*exp(b*( (x+0.5) - low_age)) )
+  x <- 80:115
+  Mx <- ( a*exp(b*( (x+0.5) - 80) ) ) / ( 1 + d*exp(b*( (x+0.5) - 80)) )
   Mx <- cbind(x, Mx)
   
   return(Mx)
@@ -251,16 +246,16 @@ fit_beard <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
                         gr = function(params) grad_fn(params, data, fn), 
                         method = "L-BFGS-B", 
                         lower = c(.Machine$double.eps, .Machine$double.eps), 
-                        upper = c(5, 5))
-  high_age <- case_when(
-    data$Country == "fra" ~ fra_high_age,
-    data$Country == "swe" ~ swe_high_age
-  )
-  high_age <- high_age[1]
-  opt_params <- optim_result$par
-  fitted_mx <- beard_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3], 
-                            low_age, high_age)
+                        upper = c(5, 5),
+                        control = list(fnscale=-1))
+  # high_age <- case_when(
+  #   data$Country == "fra" ~ fra_high_age,
+  #   data$Country != "fra" ~ scand_high_age
+  # )
+  # high_age <- high_age[1]
   
+  fitted_mx <- beard_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3])
+  opt_params <- optim_result$par
   log_lik_opt <- log_lik_fn(opt_params, data, fn)
   num_params <- length(opt_params)
   
@@ -329,7 +324,7 @@ gompertz_get_init_params <- function(log_lik_fn, data, fn,
   })
   
   # Find the combination with the highest log-likelihood (least negative)
-  best_params <- grid_search_results[which.min(grid_search_results$log_lik), ]
+  best_params <- grid_search_results[which.max(grid_search_results$log_lik), ]
   
   # Extract the best initial values for a and b
   initial_params <- c(a = best_params$a, b = best_params$b)
@@ -342,7 +337,7 @@ gompertz_fn <- function(params, data) {
   b <- params[2]
   x <- data$Age
   
-  ( a * exp(b*( (x+0.5) - low_age) ) )
+  ( a * exp(b*( (x+0.5) - 80) ) )
 }
 
 gompertz_get_grad <- function(params, data, fn, epsilon = 1e-8) {
@@ -353,7 +348,7 @@ gompertz_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   Dx <- data$Deaths
   Ex <- data$Exposure
   
-  Q = b * (x + 0.5 - low_age)
+  Q = b * (x + 0.5 - 80)
   P = exp(Q)
   N = a * P
   mux = N
@@ -367,12 +362,12 @@ gompertz_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   dNda = P
   dNdP = a
   dPdQ = exp(Q)
-  dQdb = x + 0.5 - low_age
+  dQdb = x + 0.5 - 80
   
   grad_a = sum( (dLdG * dGdmux * dmuxdN * dNda) )
   grad_b = sum( (dLdG * dGdmux * dmuxdN * dNdP * dPdQ * dQdb) )
   
-  grad <- -c(grad_a, grad_b) #* 10^-6 
+  grad <- c(grad_a, grad_b) #* 10^-6 
   
   if (any(!is.finite(grad))) {
     print(params)
@@ -383,10 +378,10 @@ gompertz_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   return(grad)
 }
 
-gompertz_get_mx <- function(a,b, low_age, high_age) {
+gompertz_get_mx <- function(a,b) {
   
-  x <- low_age:high_age
-  Mx <- a*exp(b*( (x+0.5) - low_age) ) 
+  x <- 80:115
+  Mx <- a*exp(b*( (x+0.5) - 80) ) 
   Mx <- cbind(x, Mx)
   
   return(Mx)
@@ -399,14 +394,15 @@ fit_gompertz <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
                         gr = function(params) grad_fn(params, data, fn), 
                         method = "L-BFGS-B", 
                         lower = c(.Machine$double.eps, .Machine$double.eps), 
-                        upper = c(5, 5))
-  high_age <- case_when(
-    data$Country == "fra" ~ fra_high_age,
-    data$Country == "swe" ~ swe_high_age
-  )
-  high_age <- high_age[1]
+                        upper = c(5, 5),
+                        control = list(fnscale=-1))
+  # high_age <- case_when(
+  #   data$Country == "fra" ~ fra_high_age,
+  #   data$Country != "fra" ~ scand_high_age
+  # )
+  # high_age <- high_age[1]
   opt_params <- optim_result$par
-  fitted_mx <- gompertz_get_mx(optim_result$par[1], optim_result$par[2], low_age, high_age)
+  fitted_mx <- gompertz_get_mx(optim_result$par[1], optim_result$par[2])
   
   log_lik_opt <- log_lik_fn(opt_params, data, fn)
   num_params <- length(opt_params)
@@ -476,7 +472,7 @@ makeham_get_init_params <- function(log_lik_fn, data, fn,
   })
   
   # Find the combination with the highest log-likelihood (least negative)
-  best_params <- grid_search_results[which.min(grid_search_results$log_lik), ]
+  best_params <- grid_search_results[which.max(grid_search_results$log_lik), ]
   
   # Extract the best initial values for a and b
   initial_params <- c(a = best_params$a, b = best_params$b, g = best_params$g)
@@ -490,7 +486,7 @@ makeham_fn <- function(params, data) {
   g <- params[3]
   x <- data$Age
   
-  ( g + (a*exp(b*( (x+0.5) - low_age) )) ) 
+  ( g + (a*exp(b*( (x+0.5) - 80) )) ) 
 }
 
 makeham_get_grad <- function(params, data, fn, epsilon = 1e-8) {
@@ -502,7 +498,7 @@ makeham_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   Dx <- data$Deaths
   Ex <- data$Exposure
   
-  Q = b * (x + 0.5 - low_age)
+  Q = b * (x + 0.5 - 80)
   P = exp(Q)
   N = a * P
   mux = g + N
@@ -517,13 +513,13 @@ makeham_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   dNda = P
   dNdP = a
   dPdQ = exp(Q)
-  dQdb = x + 0.5 - low_age
+  dQdb = x + 0.5 - 80
   
   grad_a = sum( (dLdG * dGdmux * dmuxdN * dNda) )
   grad_b = sum( (dLdG * dGdmux * dmuxdN * dNdP * dPdQ * dQdb) )
   grad_g = sum( (dLdG * dGdmux * dmuxdg) )
   
-  grad <- -c(grad_a, grad_b, grad_g) #* 10^-6 
+  grad <- c(grad_a, grad_b, grad_g) #* 10^-6 
   
   if (any(!is.finite(grad))) {
     print(params)
@@ -534,10 +530,10 @@ makeham_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   return(grad)
 }
 
-makeham_get_mx <- function(a,b,g, low_age, high_age) {
+makeham_get_mx <- function(a,b,g) {
   
-  x <- low_age:high_age
-  Mx <- ( g + (a*exp(b*( (x+0.5) - low_age) )) )
+  x <- 80:115
+  Mx <- ( g + (a*exp(b*( (x+0.5) - 80) )) )
   Mx <- cbind(x, Mx)
   
   return(Mx)
@@ -550,15 +546,16 @@ fit_makeham <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
                         gr = function(params) grad_fn(params, data, fn), 
                         method = "L-BFGS-B", 
                         lower = c(.Machine$double.eps, .Machine$double.eps), 
-                        upper = c(5, 5))
-  high_age <- case_when(
-    data$Country == "fra" ~ fra_high_age,
-    data$Country == "swe" ~ swe_high_age
-  )
-  high_age <- high_age[1]
+                        upper = c(5, 5),
+                        control = list(fnscale=-1))
+  # high_age <- case_when(
+  #   data$Country == "fra" ~ fra_high_age,
+  #   data$Country != "fra" ~ scand_high_age
+  # )
+  # high_age <- high_age[1]
+
   opt_params <- optim_result$par
-  fitted_mx <- makeham_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3],
-                              low_age, high_age)
+  fitted_mx <- makeham_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3])
   
   log_lik_opt <- log_lik_fn(opt_params, data, fn)
   num_params <- length(opt_params)
@@ -629,7 +626,7 @@ lq_get_init_params <- function(log_lik_fn, data, fn,
   })
   
   # Find the combination with the highest log-likelihood (least negative)
-  best_params <- grid_search_results[which.min(grid_search_results$log_lik), ]
+  best_params <- grid_search_results[which.max(grid_search_results$log_lik), ]
   
   # Extract the best initial values for a and b
   initial_params <- c(a = best_params$a, b = best_params$b, g = best_params$g)
@@ -643,7 +640,7 @@ lq_fn <- function(params, data) {
   g <- params[3]
   x <- data$Age
   
-  ( exp(a + b*( (x+0.5) - low_age) + g*( (x+0.5) - low_age)^2) ) 
+  ( exp(a + b*( (x+0.5) - 80) + g*( (x+0.5) - 80)^2) ) 
 }
 
 lq_get_grad <- function(params, data, fn, epsilon = 1e-8) {
@@ -655,8 +652,8 @@ lq_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   Dx <- data$Deaths
   Ex <- data$Exposure
   
-  Q = b * (x + 0.5 - low_age)
-  R = g * (x + 0.5 - low_age)^2
+  Q = b * (x + 0.5 - 80)
+  R = g * (x + 0.5 - 80)^2
   S = a + Q + R
   mux = exp(S)
   M = log(mux)
@@ -669,14 +666,14 @@ lq_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   dSda = 1
   dSdQ = 1
   dSdR = 1
-  dRdg = (x + 0.5 - low_age)^2
-  dQdb = x + 0.5 - low_age
+  dRdg = (x + 0.5 - 80)^2
+  dQdb = x + 0.5 - 80
   
   grad_a = sum( (dLdG * dGdmux * dmuxdS * dSda) )
   grad_b = sum( (dLdG * dGdmux * dmuxdS * dSdQ * dQdb) )
   grad_g = sum( (dLdG * dGdmux * dmuxdS * dSdR * dRdg) )
   
-  grad <- -c(grad_a, grad_b, grad_g) #* 10^-6 
+  grad <- c(grad_a, grad_b, grad_g) #* 10^-6 
   
   if (any(!is.finite(grad))) {
     print(params)
@@ -687,10 +684,10 @@ lq_get_grad <- function(params, data, fn, epsilon = 1e-8) {
   return(grad)
 }
 
-lq_get_mx <- function(a,b,g, low_age, high_age) {
+lq_get_mx <- function(a,b,g) {
   
-  x <- low_age:high_age
-  Mx <- ( exp(a + b*( (x+0.5) - low_age) + g*( (x+0.5) - low_age)^2) )
+  x <- 80:115
+  Mx <- ( exp(a + b*( (x+0.5) - 80) + g*( (x+0.5) - 80)^2) )
   Mx <- cbind(x, Mx)
   
   return(Mx)
@@ -701,15 +698,16 @@ fit_lq <- function(init_param_fn, log_lik_fn, grad_fn, fn, data) {
   optim_result <- optim(par = initial_params, 
                         fn = function(params) log_lik_fn(params, data, fn),
                         gr = function(params) grad_fn(params, data, fn), 
-                        method = "BFGS")
-  high_age <- case_when(
-    data$Country == "fra" ~ fra_high_age,
-    data$Country == "swe" ~ swe_high_age
-  )
-  high_age <- high_age[1]
+                        method = "BFGS",
+                        control = list(fnscale=-1))
+  # high_age <- case_when(
+  #   data$Country == "fra" ~ fra_high_age,
+  #   data$Country != "fra" ~ scand_high_age
+  # )
+  # high_age <- high_age[1]
+
   opt_params <- optim_result$par
-  fitted_mx <- lq_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3],
-                         low_age, high_age)
+  fitted_mx <- lq_get_mx(optim_result$par[1], optim_result$par[2], optim_result$par[3])
   
   log_lik_opt <- log_lik_fn(opt_params, data, fn)
   num_params <- length(opt_params)
