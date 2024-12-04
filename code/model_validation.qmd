@@ -21,8 +21,9 @@ path <- here("code")
 
 ```{r}
 # source and test functions
-source(paste(path, "model_fitting_functions_rates.R", sep='/'))
+source(paste(path, "model_fitting_functions_cohort.R", sep='/'))
 test_file(paste(path, "unit_testing_rates.R", sep='/'))
+source(paste(path, "local_flex_models.R", sep='/'))
 ```
 
 ```{r}
@@ -214,3 +215,5 @@ ggplot(combined_results, aes(x = model, y = AIC, fill = Sex)) +
   facet_wrap(~ Sex) +
   theme_minimal()
 ```
+
+## Testing mixture models 

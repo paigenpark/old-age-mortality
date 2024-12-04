@@ -72,6 +72,7 @@ path <- here("code")
 ```{r}
 # source and test functions
 source(paste(path, "model_fitting_functions_cohort.R", sep='/'))
+source(paste(path, "local_flex_models.R", sep='/'))
 #test_file(paste(path, "unit_testing_rates.R", sep='/'))
 ```
 
@@ -200,17 +201,30 @@ lq_fit <- lq_fit |>
                               rename(fitted_rates_Mx = Mx, fitted_rates_x = x)))
 ```
 
+### Mixture model fits
+
+```{r}
+# fit mixture model
+mixture_fit <- fit_all_mixture(cohort_data_with_mx)
+```
+
+```{r}
+mixture_fit <- mixture_fit |>
+  mutate(fitted_rates = map(fitted_rates, ~ as.data.frame(.) %>%
+                              rename(fitted_rates_Mx = mixture_rate, fitted_rates_x = x)))
+```
+
 ### Sample of Cohort Model Fits for France and Sweden
 
 #### France Fits
 
 ```{r}
-cohorts_to_plot = c(1885)
+cohorts_to_plot = c(1885, 1890, 1895, 1900)
 country = "fra"
 sex = "f"
 fitted_models <- list(kannisto = kannisto_fit, beard = beard_fit, 
                       gompertz = gompertz_fit, makeham = makeham_fit,
-                      lq = lq_fit)
+                      lq = lq_fit, mixture = mixture_fit)
 filtered_data <- list()
 
 for (i in seq_along(fitted_models)) {
@@ -244,6 +258,7 @@ joint_filtered <- pivot_longer(joint_filtered, cols = c(kannisto.fitted_rates_Mx
                                                         gompertz.fitted_rates_Mx,
                                                         makeham.fitted_rates_Mx,
                                                         lq.fitted_rates_Mx,
+                                                        mixture.fitted_rates_Mx,
                                                         raw_mx), 
                                names_to = "Type", values_to = "Rate")
 
@@ -258,6 +273,7 @@ custom_labels <- c("kannisto.fitted_rates_Mx" = "Kannisto",
                    "gompertz.fitted_rates_Mx" = "Gompertz", 
                    "makeham.fitted_rates_Mx" = "Makeham",
                    "lq.fitted_rates_Mx" = "Log-Quadratic",
+                   "mixture.fitted_rates_Mx" = "Beard Mixture",
                    "raw_mx" = "Raw rates")
 
 pdf("france_fits.pdf", width = 9, height = 6)
@@ -284,6 +300,7 @@ ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, linetype = Type, gro
                                 "makeham.fitted_rates_Mx" = "black",
                                 "gompertz.fitted_rates_Mx" = "red",
                                 "lq.fitted_rates_Mx" = "pink",
+                                "mixture.fitted_rates_Mx" = "purple",
                                 "raw_mx" = "grey"),
                      labels = custom_labels) +
   scale_linetype_manual(values = c("kannisto.fitted_rates_Mx" = "solid",
@@ -291,6 +308,7 @@ ggplot(joint_filtered, aes(x = Age, y = Rate, color = Type, linetype = Type, gro
                                    "gompertz.fitted_rates_Mx" = "solid",
                                    "makeham.fitted_rates_Mx" = "solid",
                                    "lq.fitted_rates_Mx" = "solid",
+                                   "mixture.fitted_rates_Mx" = "solid",
                                    "raw_mx" = "solid"),
                         labels = custom_labels) +
   xlim(80, 115)  # Setting x-axis limits
@@ -420,7 +438,11 @@ makeham_fit <- makeham_fit |>
 lq_fit <- lq_fit |>
   mutate(model = "L-Q")
 
-combined_results <- bind_rows(beard_fit, kannisto_fit, gompertz_fit, makeham_fit, lq_fit)
+mixture_fit <- mixture_fit |>
+  mutate(model = "Mixture")
+
+combined_results <- bind_rows(beard_fit, kannisto_fit, gompertz_fit, 
+                              makeham_fit, lq_fit, mixture_fit)
 ```
 
 ```{r}
